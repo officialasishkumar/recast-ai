@@ -308,7 +308,6 @@ def _process_message(
     logger.info("processing_message", queue=FRAMES_QUEUE)
 
     # 1. Parse payload
-    frames_prefix: str = payload.get("frames_prefix", f"frames/{job_id}/")
     audio_file: str = payload.get("audio_file", "")
     duration_ms: int = payload.get("duration_ms", 0)
 
