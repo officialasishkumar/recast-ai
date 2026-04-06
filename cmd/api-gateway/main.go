@@ -58,9 +58,10 @@ func main() {
 
 	// ---- redis ----
 	rdb := redis.NewClient(&redis.Options{
-		Addr:     redisCfg.Addr(),
-		Password: redisCfg.Password,
-		DB:       redisCfg.DB,
+		Addr:      redisCfg.Addr(),
+		Password:  redisCfg.Password,
+		DB:        redisCfg.DB,
+		TLSConfig: redisCfg.TLSConfig(),
 	})
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	if err := rdb.Ping(ctx).Err(); err != nil {

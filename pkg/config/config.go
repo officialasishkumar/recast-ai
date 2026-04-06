@@ -1,6 +1,7 @@
 package config
 
 import (
+	"crypto/tls"
 	"fmt"
 	"os"
 	"strconv"
@@ -38,10 +39,19 @@ type Redis struct {
 	Port     int
 	Password string
 	DB       int
+	UseTLS   bool
 }
 
 func (r Redis) Addr() string {
 	return fmt.Sprintf("%s:%d", r.Host, r.Port)
+}
+
+// TLSConfig returns a *tls.Config when TLS is enabled, nil otherwise.
+func (r Redis) TLSConfig() *tls.Config {
+	if r.UseTLS {
+		return &tls.Config{MinVersion: tls.VersionTLS12}
+	}
+	return nil
 }
 
 // RabbitMQ holds AMQP connection settings.
@@ -51,9 +61,13 @@ type RabbitMQ struct {
 	User     string
 	Password string
 	VHost    string
+	RawURL   string // full AMQP(S) URL — if set, overrides individual fields
 }
 
 func (r RabbitMQ) URL() string {
+	if r.RawURL != "" {
+		return r.RawURL
+	}
 	return fmt.Sprintf("amqp://%s:%s@%s:%d/%s", r.User, r.Password, r.Host, r.Port, r.VHost)
 }
 
@@ -148,6 +162,7 @@ func LoadRedis() Redis {
 		Port:     EnvInt("REDIS_PORT", 6379),
 		Password: Env("REDIS_PASSWORD", ""),
 		DB:       EnvInt("REDIS_DB", 0),
+		UseTLS:   EnvBool("REDIS_TLS", false),
 	}
 }
 
@@ -159,6 +174,7 @@ func LoadRabbitMQ() RabbitMQ {
 		User:     Env("RABBITMQ_USER", "guest"),
 		Password: Env("RABBITMQ_PASSWORD", "guest"),
 		VHost:    Env("RABBITMQ_VHOST", ""),
+		RawURL:   Env("RABBITMQ_URL", ""),
 	}
 }
 

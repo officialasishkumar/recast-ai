@@ -60,9 +60,10 @@ func main() {
 	}
 
 	rdb := redis.NewClient(&redis.Options{
-		Addr:     redisCfg.Addr(),
-		Password: redisCfg.Password,
-		DB:       redisCfg.DB,
+		Addr:      redisCfg.Addr(),
+		Password:  redisCfg.Password,
+		DB:        redisCfg.DB,
+		TLSConfig: redisCfg.TLSConfig(),
 	})
 	defer rdb.Close()
 

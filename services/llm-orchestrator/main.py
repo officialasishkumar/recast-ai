@@ -89,15 +89,20 @@ def _run_health_server() -> None:
 
 def _connect_rabbitmq() -> pika.BlockingConnection:
     """Connect to RabbitMQ with retry."""
-    params = pika.ConnectionParameters(
-        host=settings.rabbitmq_host,
-        port=settings.rabbitmq_port,
-        credentials=pika.PlainCredentials(
-            settings.rabbitmq_user, settings.rabbitmq_password
-        ),
-        heartbeat=600,
-        blocked_connection_timeout=300,
-    )
+    if settings.rabbitmq_url_override:
+        params = pika.URLParameters(settings.rabbitmq_url_override)
+        params.heartbeat = 600
+        params.blocked_connection_timeout = 300
+    else:
+        params = pika.ConnectionParameters(
+            host=settings.rabbitmq_host,
+            port=settings.rabbitmq_port,
+            credentials=pika.PlainCredentials(
+                settings.rabbitmq_user, settings.rabbitmq_password
+            ),
+            heartbeat=600,
+            blocked_connection_timeout=300,
+        )
     for attempt in range(1, 31):
         try:
             conn = pika.BlockingConnection(params)

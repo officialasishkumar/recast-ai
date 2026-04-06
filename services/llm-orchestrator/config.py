@@ -25,6 +25,7 @@ class Settings(BaseSettings):
     rabbitmq_port: int = Field(default=5672, description="RabbitMQ AMQP port")
     rabbitmq_user: str = Field(default="guest", description="RabbitMQ username")
     rabbitmq_password: str = Field(default="guest", description="RabbitMQ password")
+    rabbitmq_url_override: str = Field(default="", description="Full AMQP(S) URL — overrides individual fields")
 
     # --- S3 / MinIO ---
     s3_endpoint: str = Field(default="localhost:9000", description="S3-compatible endpoint")
@@ -57,23 +58,28 @@ class Settings(BaseSettings):
 
     @property
     def rabbitmq_url(self) -> str:
+        if self.rabbitmq_url_override:
+            return self.rabbitmq_url_override
         return (
             f"amqp://{self.rabbitmq_user}:{self.rabbitmq_password}"
             f"@{self.rabbitmq_host}:{self.rabbitmq_port}/"
         )
 
+    # --- Database ---
+    db_sslmode: str = Field(default="disable", description="PostgreSQL sslmode")
+
     @property
     def dsn(self) -> str:
         return (
             f"host={self.db_host} port={self.db_port} user={self.db_user} "
-            f"password={self.db_password} dbname={self.db_name} sslmode=disable"
+            f"password={self.db_password} dbname={self.db_name} sslmode={self.db_sslmode}"
         )
 
     @property
     def db_url(self) -> str:
         return (
             f"postgresql://{self.db_user}:{self.db_password}"
-            f"@{self.db_host}:{self.db_port}/{self.db_name}"
+            f"@{self.db_host}:{self.db_port}/{self.db_name}?sslmode={self.db_sslmode}"
         )
 
 

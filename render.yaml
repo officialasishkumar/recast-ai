@@ -8,54 +8,9 @@ services:
     dockerContext: .
     plan: free
     envVars:
+      - fromGroup: recast-shared
       - key: PORT
         value: "8080"
-      - key: DB_HOST
-        fromDatabase:
-          name: recast-db
-          property: host
-      - key: DB_PORT
-        fromDatabase:
-          name: recast-db
-          property: port
-      - key: DB_USER
-        fromDatabase:
-          name: recast-db
-          property: user
-      - key: DB_PASSWORD
-        fromDatabase:
-          name: recast-db
-          property: password
-      - key: DB_NAME
-        fromDatabase:
-          name: recast-db
-          property: database
-      - key: DB_SSLMODE
-        value: require
-      - key: REDIS_HOST
-        sync: false
-      - key: REDIS_PORT
-        value: "6379"
-      - key: REDIS_PASSWORD
-        sync: false
-      - key: RABBITMQ_HOST
-        sync: false
-      - key: RABBITMQ_PORT
-        value: "5672"
-      - key: RABBITMQ_USER
-        sync: false
-      - key: RABBITMQ_PASSWORD
-        sync: false
-      - key: S3_ENDPOINT
-        sync: false
-      - key: S3_ACCESS_KEY
-        sync: false
-      - key: S3_SECRET_KEY
-        sync: false
-      - key: S3_BUCKET
-        value: recast
-      - key: S3_USE_SSL
-        value: "true"
       - key: JWT_SECRET
         generateValue: true
       - key: ENVIRONMENT
@@ -145,6 +100,12 @@ envVarGroups:
       - key: REDIS_PORT
         sync: false
       - key: REDIS_PASSWORD
+        sync: false
+      - key: REDIS_TLS
+        value: "true"
+      - key: RABBITMQ_URL
+        sync: false
+      - key: RABBITMQ_URL_OVERRIDE
         sync: false
       - key: RABBITMQ_HOST
         sync: false
