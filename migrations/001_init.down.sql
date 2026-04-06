@@ -1,0 +1,6 @@
+DROP TABLE IF EXISTS refresh_tokens;
+DROP TABLE IF EXISTS webhooks;
+DROP TABLE IF EXISTS transcript_segments;
+DROP TABLE IF EXISTS jobs;
+DROP TABLE IF EXISTS voices;
+DROP TABLE IF EXISTS users;
