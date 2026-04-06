@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, use } from "react";
+import { useEffect, useState, useCallback, use } from "react";
 import { useRouter } from "next/navigation";
 import {
   ArrowLeft,
@@ -61,15 +61,7 @@ export default function JobDetailPage({
   const [loading, setLoading] = useState(true);
   const [exporting, setExporting] = useState(false);
 
-  useEffect(() => {
-    if (!localStorage.getItem("token")) {
-      router.push("/login");
-      return;
-    }
-    loadJob();
-  }, [id, router]);
-
-  async function loadJob() {
+  const loadJob = useCallback(async () => {
     setLoading(true);
     try {
       const data = await getJob(id);
@@ -83,12 +75,21 @@ export default function JobDetailPage({
     } finally {
       setLoading(false);
     }
-  }
+  }, [id]);
 
-  // WebSocket for real-time updates
   useEffect(() => {
-    if (!job) return;
-    if (job.status === "completed" || job.status === "failed") return;
+    if (!localStorage.getItem("token")) {
+      router.push("/login");
+      return;
+    }
+    loadJob();
+  }, [loadJob, router]);
+
+  // WebSocket for real-time updates.
+  const jobStatus = job?.status;
+  useEffect(() => {
+    if (!jobStatus) return;
+    if (jobStatus === "completed" || jobStatus === "failed") return;
 
     const cleanup = connectJobWS(id, (event) => {
       if (event.stage) {
@@ -105,7 +106,7 @@ export default function JobDetailPage({
     });
 
     return cleanup;
-  }, [id, job?.status]);
+  }, [id, jobStatus]);
 
   async function handleExport() {
     setExporting(true);

@@ -15,13 +15,23 @@ import { Progress } from "@/components/ui/progress";
 import { Badge } from "@/components/ui/badge";
 import { User, CreditCard, BarChart3, Webhook } from "lucide-react";
 
+interface Profile {
+  name: string;
+  email: string;
+  plan: "free" | "pro";
+  minutesUsed: number;
+  minutesQuota: number;
+}
+
 export default function SettingsPage() {
   const router = useRouter();
-  const [name, setName] = useState("User");
-  const [email, setEmail] = useState("user@example.com");
-  const [plan, setPlan] = useState<"free" | "pro">("free");
-  const [minutesUsed, setMinutesUsed] = useState(3.2);
-  const [minutesQuota, setMinutesQuota] = useState(5);
+  const [profile, setProfile] = useState<Profile>({
+    name: "User",
+    email: "user@example.com",
+    plan: "free",
+    minutesUsed: 3.2,
+    minutesQuota: 5,
+  });
   const [webhookUrl, setWebhookUrl] = useState("");
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
@@ -29,15 +39,13 @@ export default function SettingsPage() {
   useEffect(() => {
     if (!localStorage.getItem("token")) {
       router.push("/login");
-      return;
     }
-    // In production, fetch user profile from /me endpoint
-    // For now, use placeholder data
+    // In production, fetch user profile from /me endpoint and call setProfile
   }, [router]);
 
   async function saveProfile() {
     setSaving(true);
-    // In production, call api.updateProfile(name, webhookUrl)
+    // In production, call api.updateProfile(profile.name, webhookUrl)
     await new Promise((r) => setTimeout(r, 500));
     setSaving(false);
     setSaved(true);
@@ -66,9 +74,9 @@ export default function SettingsPage() {
                 Name
               </label>
               <Input
-                value={name}
+                value={profile.name}
                 onChange={(e) => {
-                  setName(e.target.value);
+                  setProfile((p) => ({ ...p, name: e.target.value }));
                   setSaved(false);
                 }}
               />
@@ -77,7 +85,7 @@ export default function SettingsPage() {
               <label className="mb-1.5 block text-sm font-medium text-slate-300">
                 Email
               </label>
-              <Input value={email} disabled />
+              <Input value={profile.email} disabled />
               <p className="mt-1 text-xs text-slate-500">
                 Email cannot be changed
               </p>
@@ -100,18 +108,18 @@ export default function SettingsPage() {
           </CardHeader>
           <CardContent>
             <div className="flex items-center gap-3">
-              <Badge variant={plan === "pro" ? "indigo" : "default"}>
-                {plan === "pro" ? "Pro" : "Free"}
+              <Badge variant={profile.plan === "pro" ? "indigo" : "default"}>
+                {profile.plan === "pro" ? "Pro" : "Free"}
               </Badge>
               <span className="text-sm text-slate-400">
-                {plan === "pro"
+                {profile.plan === "pro"
                   ? "Unlimited minutes, all premium features"
                   : "5 minutes per month, basic features"}
               </span>
             </div>
           </CardContent>
           <CardFooter>
-            {plan === "free" ? (
+            {profile.plan === "free" ? (
               <Button size="sm">Upgrade to Pro &mdash; $29/mo</Button>
             ) : (
               <Button variant="outline" size="sm">
@@ -133,24 +141,33 @@ export default function SettingsPage() {
             <div className="flex items-center justify-between text-sm">
               <span className="text-slate-300">Minutes used this month</span>
               <span className="text-slate-400">
-                {minutesUsed.toFixed(1)} / {minutesQuota} min
+                {profile.minutesUsed.toFixed(1)} / {profile.minutesQuota} min
               </span>
             </div>
-            <Progress value={minutesUsed} max={minutesQuota} className="mt-3" />
+            <Progress
+              value={profile.minutesUsed}
+              max={profile.minutesQuota}
+              className="mt-3"
+            />
             <div className="mt-4 grid grid-cols-3 gap-4 text-center">
               <div>
                 <p className="text-2xl font-bold text-white">
-                  {minutesUsed.toFixed(1)}
+                  {profile.minutesUsed.toFixed(1)}
                 </p>
                 <p className="text-xs text-slate-500">Minutes used</p>
               </div>
               <div>
-                <p className="text-2xl font-bold text-white">{minutesQuota}</p>
+                <p className="text-2xl font-bold text-white">
+                  {profile.minutesQuota}
+                </p>
                 <p className="text-xs text-slate-500">Quota</p>
               </div>
               <div>
                 <p className="text-2xl font-bold text-white">
-                  {Math.max(0, minutesQuota - minutesUsed).toFixed(1)}
+                  {Math.max(
+                    0,
+                    profile.minutesQuota - profile.minutesUsed
+                  ).toFixed(1)}
                 </p>
                 <p className="text-xs text-slate-500">Remaining</p>
               </div>

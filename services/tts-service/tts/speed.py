@@ -7,7 +7,6 @@ match target segment durations, and concatenate WAV files.
 from __future__ import annotations
 
 import json
-import math
 import subprocess
 
 import structlog

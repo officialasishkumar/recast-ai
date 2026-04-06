@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { useEffect, useState, useRef } from "react";
+import { useEffect, useState, useRef, useSyncExternalStore } from "react";
 import {
   LayoutDashboard,
   Settings,
@@ -13,30 +13,61 @@ import {
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 
+// Module-level auth change notification for same-tab updates.
+const authListeners = new Set<() => void>();
+
+export function notifyAuthChange() {
+  authListeners.forEach((fn) => fn());
+}
+
+function subscribeAuth(callback: () => void) {
+  authListeners.add(callback);
+  window.addEventListener("storage", callback);
+  return () => {
+    authListeners.delete(callback);
+    window.removeEventListener("storage", callback);
+  };
+}
+
+function getAuthSnapshot() {
+  return !!localStorage.getItem("token");
+}
+
+function getAuthServerSnapshot() {
+  return false;
+}
+
+function useAuth() {
+  return useSyncExternalStore(
+    subscribeAuth,
+    getAuthSnapshot,
+    getAuthServerSnapshot
+  );
+}
+
 export function Navbar() {
   const pathname = usePathname();
   const router = useRouter();
-  const [authenticated, setAuthenticated] = useState(false);
+  const authenticated = useAuth();
   const [menuOpen, setMenuOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
 
-  useEffect(() => {
-    setAuthenticated(!!localStorage.getItem("token"));
-  }, [pathname]);
+  // Force re-check on navigation by reading pathname (triggers re-render).
+  void pathname;
 
   useEffect(() => {
-    function handleClick(e: MouseEvent) {
+    function handleClickOutside(e: MouseEvent) {
       if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
         setMenuOpen(false);
       }
     }
-    document.addEventListener("mousedown", handleClick);
-    return () => document.removeEventListener("mousedown", handleClick);
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
   }, []);
 
   function logout() {
     localStorage.removeItem("token");
-    setAuthenticated(false);
+    notifyAuthChange();
     router.push("/login");
   }
 
