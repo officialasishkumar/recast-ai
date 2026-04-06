@@ -115,6 +115,7 @@ jobs:
     runs-on: ubuntu-latest
     needs: [go-lint-test, python-lint-test, web-lint-build]
     strategy:
+      fail-fast: false
       matrix:
         service:
           - api-gateway
