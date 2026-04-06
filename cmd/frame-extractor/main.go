@@ -17,6 +17,7 @@ import (
 
 	"github.com/officialasishkumar/recast-ai/internal/extractor"
 	"github.com/officialasishkumar/recast-ai/pkg/config"
+	"github.com/officialasishkumar/recast-ai/pkg/health"
 	"github.com/officialasishkumar/recast-ai/pkg/database"
 	"github.com/officialasishkumar/recast-ai/pkg/models"
 	"github.com/officialasishkumar/recast-ai/pkg/queue"
@@ -26,6 +27,8 @@ import (
 func main() {
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo}))
 	slog.SetDefault(logger)
+
+	health.Serve(logger)
 
 	baseCfg := config.LoadBase("frame-extractor")
 	rabbitCfg := config.LoadRabbitMQ()

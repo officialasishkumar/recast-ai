@@ -1,0 +1,168 @@
+services:
+  # --- Go Services ---
+
+  - type: web
+    name: recast-api-gateway
+    runtime: docker
+    dockerfilePath: ./docker/api-gateway.Dockerfile
+    dockerContext: .
+    plan: free
+    envVars:
+      - key: PORT
+        value: "8080"
+      - key: DB_HOST
+        fromDatabase:
+          name: recast-db
+          property: host
+      - key: DB_PORT
+        fromDatabase:
+          name: recast-db
+          property: port
+      - key: DB_USER
+        fromDatabase:
+          name: recast-db
+          property: user
+      - key: DB_PASSWORD
+        fromDatabase:
+          name: recast-db
+          property: password
+      - key: DB_NAME
+        fromDatabase:
+          name: recast-db
+          property: database
+      - key: DB_SSLMODE
+        value: require
+      - key: REDIS_HOST
+        sync: false
+      - key: REDIS_PORT
+        value: "6379"
+      - key: REDIS_PASSWORD
+        sync: false
+      - key: RABBITMQ_HOST
+        sync: false
+      - key: RABBITMQ_PORT
+        value: "5672"
+      - key: RABBITMQ_USER
+        sync: false
+      - key: RABBITMQ_PASSWORD
+        sync: false
+      - key: S3_ENDPOINT
+        sync: false
+      - key: S3_ACCESS_KEY
+        sync: false
+      - key: S3_SECRET_KEY
+        sync: false
+      - key: S3_BUCKET
+        value: recast
+      - key: S3_USE_SSL
+        value: "true"
+      - key: JWT_SECRET
+        generateValue: true
+      - key: ENVIRONMENT
+        value: production
+
+  - type: web
+    name: recast-upload
+    runtime: docker
+    dockerfilePath: ./docker/upload-service.Dockerfile
+    dockerContext: .
+    plan: free
+    envVars:
+      - fromGroup: recast-shared
+
+  - type: web
+    name: recast-frame-extractor
+    runtime: docker
+    dockerfilePath: ./docker/frame-extractor.Dockerfile
+    dockerContext: .
+    plan: free
+    envVars:
+      - fromGroup: recast-shared
+
+  - type: web
+    name: recast-mux
+    runtime: docker
+    dockerfilePath: ./docker/mux-service.Dockerfile
+    dockerContext: .
+    plan: free
+    envVars:
+      - fromGroup: recast-shared
+
+  - type: web
+    name: recast-delivery
+    runtime: docker
+    dockerfilePath: ./docker/delivery-service.Dockerfile
+    dockerContext: .
+    plan: free
+    envVars:
+      - fromGroup: recast-shared
+
+  # --- Python Services ---
+
+  - type: web
+    name: recast-llm-orchestrator
+    runtime: docker
+    dockerfilePath: ./docker/llm-orchestrator.Dockerfile
+    dockerContext: .
+    plan: free
+    envVars:
+      - fromGroup: recast-shared
+      - key: ANTHROPIC_API_KEY
+        sync: false
+      - key: LLM_MODEL
+        value: claude-sonnet-4-20250514
+
+  - type: web
+    name: recast-tts
+    runtime: docker
+    dockerfilePath: ./docker/tts-service.Dockerfile
+    dockerContext: .
+    plan: free
+    envVars:
+      - fromGroup: recast-shared
+      - key: ELEVENLABS_API_KEY
+        sync: false
+      - key: TTS_PROVIDER
+        value: mock
+
+envVarGroups:
+  - name: recast-shared
+    envVars:
+      - key: DB_HOST
+        sync: false
+      - key: DB_PORT
+        value: "5432"
+      - key: DB_USER
+        sync: false
+      - key: DB_PASSWORD
+        sync: false
+      - key: DB_NAME
+        sync: false
+      - key: DB_SSLMODE
+        value: require
+      - key: REDIS_HOST
+        sync: false
+      - key: REDIS_PORT
+        sync: false
+      - key: REDIS_PASSWORD
+        sync: false
+      - key: RABBITMQ_HOST
+        sync: false
+      - key: RABBITMQ_PORT
+        value: "5672"
+      - key: RABBITMQ_USER
+        sync: false
+      - key: RABBITMQ_PASSWORD
+        sync: false
+      - key: S3_ENDPOINT
+        sync: false
+      - key: S3_ACCESS_KEY
+        sync: false
+      - key: S3_SECRET_KEY
+        sync: false
+      - key: S3_BUCKET
+        value: recast
+      - key: S3_USE_SSL
+        value: "true"
+      - key: JWT_SECRET
+        sync: false
