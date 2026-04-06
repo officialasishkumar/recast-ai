@@ -1,7 +1,11 @@
-"""LLM client wrapper for calling Claude with multimodal input.
+"""LLM client wrapper for calling Claude or Gemini with multimodal input.
 
 Handles base64 image encoding, prompt assembly, response parsing,
 schema validation with one retry, and concurrency limiting.
+
+Supports two providers:
+- ``anthropic`` (default): Uses the Anthropic Python SDK (Claude).
+- ``gemini``: Uses the Google GenAI SDK (Gemini).
 """
 
 from __future__ import annotations
@@ -10,8 +14,8 @@ import asyncio
 import base64
 import json
 import re
+from typing import Protocol
 
-import anthropic
 import structlog
 
 from orchestrator.prompt import build_system_prompt, build_user_prompt
@@ -43,12 +47,192 @@ def _extract_json(text: str) -> str:
     return text.strip()
 
 
-class LLMClient:
-    """Wrapper around the Anthropic Python SDK for transcript generation."""
+def _parse_response(raw: str) -> list[dict]:
+    """Parse the raw LLM text response into a list of dicts."""
+    cleaned = _extract_json(raw)
+    try:
+        data = json.loads(cleaned)
+    except json.JSONDecodeError as exc:
+        logger.error("json_parse_failed", raw_length=len(raw), error=str(exc))
+        return []
 
+    if not isinstance(data, list):
+        logger.error("unexpected_json_type", got=type(data).__name__)
+        return []
+
+    return data
+
+
+# --------------------------------------------------------------------------- #
+# Provider protocol
+# --------------------------------------------------------------------------- #
+
+
+class LLMProvider(Protocol):
+    """Interface that both Anthropic and Gemini clients implement."""
+
+    async def call(
+        self,
+        system_prompt: str,
+        frames: list[bytes],
+        user_text: str,
+    ) -> str: ...
+
+
+# --------------------------------------------------------------------------- #
+# Anthropic (Claude) provider
+# --------------------------------------------------------------------------- #
+
+
+class _AnthropicProvider:
     def __init__(self, api_key: str, model: str) -> None:
+        import anthropic
+
         self._client = anthropic.Anthropic(api_key=api_key)
-        self._model = model
+        self._model = model or "claude-sonnet-4-20250514"
+
+    async def call(
+        self,
+        system_prompt: str,
+        frames: list[bytes],
+        user_text: str,
+    ) -> str:
+        content: list[dict] = []
+        for frame_data in frames:
+            b64 = base64.standard_b64encode(frame_data).decode("ascii")
+            content.append({
+                "type": "image",
+                "source": {
+                    "type": "base64",
+                    "media_type": "image/jpeg",
+                    "data": b64,
+                },
+            })
+        content.append({"type": "text", "text": user_text})
+
+        loop = asyncio.get_running_loop()
+
+        def _sync_call() -> str:
+            response = self._client.messages.create(
+                model=self._model,
+                max_tokens=8192,
+                system=system_prompt,
+                messages=[{"role": "user", "content": content}],
+            )
+            for block in response.content:
+                if block.type == "text":
+                    return block.text
+            return ""
+
+        return await loop.run_in_executor(None, _sync_call)
+
+
+# --------------------------------------------------------------------------- #
+# Gemini provider
+# --------------------------------------------------------------------------- #
+
+
+class _GeminiProvider:
+    def __init__(self, api_key: str, model: str) -> None:
+        from google import genai
+
+        self._client = genai.Client(api_key=api_key)
+        self._model = model or "gemini-2.0-flash"
+
+    async def call(
+        self,
+        system_prompt: str,
+        frames: list[bytes],
+        user_text: str,
+    ) -> str:
+        from google.genai import types
+
+        parts: list[types.Part] = []
+        for frame_data in frames:
+            b64 = base64.standard_b64encode(frame_data).decode("ascii")
+            parts.append(types.Part.from_bytes(
+                data=base64.standard_b64decode(b64),
+                mime_type="image/jpeg",
+            ))
+        parts.append(types.Part.from_text(text=user_text))
+
+        loop = asyncio.get_running_loop()
+
+        def _sync_call() -> str:
+            response = self._client.models.generate_content(
+                model=self._model,
+                contents=parts,
+                config=types.GenerateContentConfig(
+                    system_instruction=system_prompt,
+                    max_output_tokens=8192,
+                ),
+            )
+            return response.text or ""
+
+        return await loop.run_in_executor(None, _sync_call)
+
+
+# --------------------------------------------------------------------------- #
+# OpenAI (GPT) provider
+# --------------------------------------------------------------------------- #
+
+
+class _OpenAIProvider:
+    def __init__(self, api_key: str, model: str) -> None:
+        import openai
+
+        self._client = openai.OpenAI(api_key=api_key)
+        self._model = model or "gpt-4o"
+
+    async def call(
+        self,
+        system_prompt: str,
+        frames: list[bytes],
+        user_text: str,
+    ) -> str:
+        content: list[dict] = []
+        for frame_data in frames:
+            b64 = base64.standard_b64encode(frame_data).decode("ascii")
+            content.append({
+                "type": "image_url",
+                "image_url": {
+                    "url": f"data:image/jpeg;base64,{b64}",
+                },
+            })
+        content.append({"type": "text", "text": user_text})
+
+        loop = asyncio.get_running_loop()
+
+        def _sync_call() -> str:
+            response = self._client.chat.completions.create(
+                model=self._model,
+                max_tokens=8192,
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": content},
+                ],
+            )
+            return response.choices[0].message.content or ""
+
+        return await loop.run_in_executor(None, _sync_call)
+
+
+# --------------------------------------------------------------------------- #
+# Unified LLMClient
+# --------------------------------------------------------------------------- #
+
+
+class LLMClient:
+    """Unified LLM client that delegates to Anthropic or Gemini."""
+
+    def __init__(self, provider: str, api_key: str, model: str) -> None:
+        if provider == "gemini":
+            self._provider: LLMProvider = _GeminiProvider(api_key, model)
+        elif provider == "openai":
+            self._provider = _OpenAIProvider(api_key, model)
+        else:
+            self._provider = _AnthropicProvider(api_key, model)
+        logger.info("llm_provider_initialized", provider=provider, model=model)
 
     async def generate_transcript(
         self,
@@ -59,11 +243,6 @@ class LLMClient:
         duration_ms: int,
     ) -> list[dict]:
         """Generate a timestamped narration transcript.
-
-        Sends the video frames as base64-encoded images alongside the
-        extracted audio text (if any) to Claude, then validates the
-        response.  On validation failure, retries once with a more
-        explicit prompt.
 
         Parameters
         ----------
@@ -82,11 +261,6 @@ class LLMClient:
         -------
         list[dict]
             Validated list of transcript segment dicts.
-
-        Raises
-        ------
-        ValueError
-            If the LLM response fails validation even after retry.
         """
         async with _SEMAPHORE:
             return await self._generate_with_retry(
@@ -101,13 +275,16 @@ class LLMClient:
         language: str,
         duration_ms: int,
     ) -> list[dict]:
-        """Call the LLM and retry once on validation failure."""
         system_prompt = build_system_prompt(style, language, duration_ms)
-        user_content = self._build_multimodal_content(frames, audio_text)
+
+        frame_descriptions = [
+            f"Frame {i + 1} of {len(frames)}" for i in range(len(frames))
+        ]
+        user_text = build_user_prompt(frame_descriptions, audio_text)
 
         # First attempt
-        raw = await self._call_llm(system_prompt, user_content)
-        segments = self._parse_response(raw)
+        raw = await self._provider.call(system_prompt, frames, user_text)
+        segments = _parse_response(raw)
         is_valid, cleaned, errors = validate_transcript(segments, duration_ms)
 
         if is_valid:
@@ -118,7 +295,7 @@ class LLMClient:
             )
             return cleaned
 
-        # Retry with a more explicit fallback prompt
+        # Retry with feedback
         logger.warning(
             "transcript_validation_failed",
             errors=errors[:10],
@@ -133,8 +310,8 @@ class LLMClient:
             + "\n\nPlease fix these issues and respond with ONLY valid JSON."
         )
 
-        raw = await self._call_llm(fallback_system, user_content)
-        segments = self._parse_response(raw)
+        raw = await self._provider.call(fallback_system, frames, user_text)
+        segments = _parse_response(raw)
         is_valid, cleaned, errors = validate_transcript(segments, duration_ms)
 
         if is_valid:
@@ -149,76 +326,3 @@ class LLMClient:
         raise ValueError(
             f"LLM response failed validation after retry: {'; '.join(errors[:5])}"
         )
-
-    def _build_multimodal_content(
-        self,
-        frames: list[bytes],
-        audio_text: str | None,
-    ) -> list[dict]:
-        """Build the multimodal content array for the Claude API.
-
-        Each frame is sent as a base64-encoded image block.  The text
-        prompt with frame descriptions and audio text follows.
-        """
-        content: list[dict] = []
-
-        frame_descriptions: list[str] = []
-        for i, frame_data in enumerate(frames):
-            b64 = base64.standard_b64encode(frame_data).decode("ascii")
-            content.append({
-                "type": "image",
-                "source": {
-                    "type": "base64",
-                    "media_type": "image/jpeg",
-                    "data": b64,
-                },
-            })
-            frame_descriptions.append(f"Frame {i + 1} of {len(frames)}")
-
-        text_prompt = build_user_prompt(frame_descriptions, audio_text)
-        content.append({"type": "text", "text": text_prompt})
-
-        return content
-
-    async def _call_llm(
-        self,
-        system_prompt: str,
-        user_content: list[dict],
-    ) -> str:
-        """Make a synchronous Anthropic API call in a thread executor.
-
-        The Anthropic Python SDK is synchronous, so we run it in the
-        default executor to avoid blocking the asyncio event loop.
-        """
-        loop = asyncio.get_running_loop()
-
-        def _sync_call() -> str:
-            response = self._client.messages.create(
-                model=self._model,
-                max_tokens=8192,
-                system=system_prompt,
-                messages=[{"role": "user", "content": user_content}],
-            )
-            # Extract text from the first text block
-            for block in response.content:
-                if block.type == "text":
-                    return block.text
-            return ""
-
-        return await loop.run_in_executor(None, _sync_call)
-
-    @staticmethod
-    def _parse_response(raw: str) -> list[dict]:
-        """Parse the raw LLM text response into a list of dicts."""
-        cleaned = _extract_json(raw)
-        try:
-            data = json.loads(cleaned)
-        except json.JSONDecodeError as exc:
-            logger.error("json_parse_failed", raw_length=len(raw), error=str(exc))
-            return []
-
-        if not isinstance(data, list):
-            logger.error("unexpected_json_type", got=type(data).__name__)
-            return []
-
-        return data

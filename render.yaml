@@ -62,10 +62,16 @@ services:
     plan: free
     envVars:
       - fromGroup: recast-shared
+      - key: LLM_PROVIDER
+        sync: false
       - key: ANTHROPIC_API_KEY
         sync: false
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: OPENAI_API_KEY
+        sync: false
       - key: LLM_MODEL
-        value: claude-sonnet-4-20250514
+        sync: false
 
   - type: web
     name: recast-tts
@@ -78,7 +84,7 @@ services:
       - key: ELEVENLABS_API_KEY
         sync: false
       - key: TTS_PROVIDER
-        value: mock
+        value: gtts
 
 envVarGroups:
   - name: recast-shared

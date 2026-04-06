@@ -466,7 +466,10 @@ def _run_consumer() -> None:
     """Main consumer loop with reconnection support."""
     global _healthy
 
-    synthesizer = TTSSynthesizer(api_key=settings.elevenlabs_api_key)
+    synthesizer = TTSSynthesizer(
+        provider=settings.tts_provider,
+        api_key=settings.elevenlabs_api_key,
+    )
     minio_client = _connect_minio()
     pg_conn = _connect_postgres()
     redis_client = _connect_redis()

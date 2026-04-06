@@ -44,11 +44,17 @@ class Settings(BaseSettings):
     db_password: str = Field(default="recast", description="PostgreSQL password")
     db_name: str = Field(default="recastai", description="PostgreSQL database name")
 
-    # --- Anthropic ---
+    # --- LLM Provider ---
+    llm_provider: str = Field(
+        default="anthropic",
+        description="LLM provider: anthropic, gemini, or openai",
+    )
     anthropic_api_key: str = Field(default="", description="Anthropic API key")
+    gemini_api_key: str = Field(default="", description="Google Gemini API key")
+    openai_api_key: str = Field(default="", description="OpenAI API key")
     llm_model: str = Field(
-        default="claude-sonnet-4-20250514",
-        description="Claude model identifier",
+        default="",
+        description="Model identifier (auto-selected per provider if empty)",
     )
 
     # --- Logging ---

@@ -220,8 +220,11 @@ services:
       S3_BUCKET: recast
       REDIS_HOST: redis
       REDIS_PORT: 6379
+      LLM_PROVIDER: ${LLM_PROVIDER:-anthropic}
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
-      LLM_MODEL: ${LLM_MODEL:-claude-sonnet-4-20250514}
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      LLM_MODEL: ${LLM_MODEL:-}
     depends_on:
       postgres:
         condition: service_healthy
@@ -251,7 +254,7 @@ services:
       REDIS_HOST: redis
       REDIS_PORT: 6379
       ELEVENLABS_API_KEY: ${ELEVENLABS_API_KEY:-}
-      TTS_PROVIDER: ${TTS_PROVIDER:-mock}
+      TTS_PROVIDER: ${TTS_PROVIDER:-gtts}
     depends_on:
       postgres:
         condition: service_healthy

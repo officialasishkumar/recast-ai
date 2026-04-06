@@ -1,12 +1,17 @@
 """TTS synthesis module.
 
-Calls the ElevenLabs API to synthesize speech, or generates a silent WAV
-placeholder in dev mode (when no API key is configured).
+Supports multiple providers:
+- ``elevenlabs``: ElevenLabs API (requires API key).
+- ``gtts``: Google Text-to-Speech (free, no API key).
+- ``mock``: Silent WAV placeholder for dev/testing.
 """
 
 from __future__ import annotations
 
+import io
 import struct
+import subprocess
+import tempfile
 
 import httpx
 import structlog
@@ -18,16 +23,7 @@ _ELEVENLABS_BASE = "https://api.elevenlabs.io/v1/text-to-speech"
 
 
 def _generate_silent_wav(duration_ms: float) -> bytes:
-    """Generate a silent WAV file of the given duration.
-
-    Used in dev mode so the pipeline can run end-to-end without a real
-    TTS API key.
-
-    Parameters
-    ----------
-    duration_ms:
-        Duration of silence in milliseconds.
-    """
+    """Generate a silent WAV file of the given duration."""
     sample_rate = 22050
     num_channels = 1
     bits_per_sample = 16
@@ -58,43 +54,74 @@ def _generate_silent_wav(duration_ms: float) -> bytes:
     return bytes(buf)
 
 
-class TTSSynthesizer:
-    """Text-to-speech synthesizer backed by ElevenLabs (or silent dev mode)."""
+def _mp3_to_wav(mp3_data: bytes) -> bytes:
+    """Convert MP3 bytes to WAV using ffmpeg."""
+    with tempfile.NamedTemporaryFile(suffix=".mp3", delete=True) as mp3_f:
+        mp3_f.write(mp3_data)
+        mp3_f.flush()
+        with tempfile.NamedTemporaryFile(suffix=".wav", delete=True) as wav_f:
+            subprocess.run(
+                [
+                    "ffmpeg", "-y",
+                    "-i", mp3_f.name,
+                    "-ar", "22050",
+                    "-ac", "1",
+                    wav_f.name,
+                ],
+                capture_output=True,
+                check=True,
+            )
+            return wav_f.read()
 
-    def __init__(self, api_key: str) -> None:
+
+class TTSSynthesizer:
+    """Text-to-speech synthesizer with multiple provider support."""
+
+    def __init__(self, provider: str, api_key: str = "") -> None:
+        self._provider = provider
         self._api_key = api_key
-        self._dev_mode = not api_key
-        if self._dev_mode:
-            logger.warning("tts_dev_mode_enabled")
+
+        if provider == "mock" or (provider == "elevenlabs" and not api_key):
+            self._provider = "mock"
+            logger.warning("tts_mock_mode_enabled")
+        else:
+            logger.info("tts_provider_initialized", provider=provider)
 
     def synthesize(self, text: str, voice_id: str) -> bytes:
         """Synthesize speech for the given text.
 
-        Parameters
-        ----------
-        text:
-            The narration text to speak.
-        voice_id:
-            The ElevenLabs voice identifier.
-
-        Returns
-        -------
-        bytes
-            WAV audio data.
+        Returns WAV audio data.
         """
-        if self._dev_mode:
-            return self._synthesize_dev(text)
-        return self._synthesize_elevenlabs(text, voice_id)
+        if self._provider == "gtts":
+            return self._synthesize_gtts(text)
+        if self._provider == "elevenlabs":
+            return self._synthesize_elevenlabs(text, voice_id)
+        return self._synthesize_mock(text)
 
-    def _synthesize_dev(self, text: str) -> bytes:
-        """Dev-mode: generate silence proportional to text length.
-
-        Heuristic: ~10 ms per character yields a reasonable approximation
-        of spoken duration.
-        """
+    def _synthesize_mock(self, text: str) -> bytes:
+        """Mock mode: generate silence proportional to text length."""
         duration_ms = max(len(text) * 10.0, 100.0)
-        logger.debug("tts_dev_synthesize", chars=len(text), duration_ms=duration_ms)
+        logger.debug("tts_mock_synthesize", chars=len(text), duration_ms=duration_ms)
         return _generate_silent_wav(duration_ms)
+
+    def _synthesize_gtts(self, text: str) -> bytes:
+        """Use Google Text-to-Speech (free, no API key)."""
+        from gtts import gTTS
+
+        tts = gTTS(text=text, lang="en")
+        mp3_buf = io.BytesIO()
+        tts.write_to_fp(mp3_buf)
+        mp3_data = mp3_buf.getvalue()
+
+        # gTTS outputs MP3 — convert to WAV for the pipeline
+        wav_data = _mp3_to_wav(mp3_data)
+
+        logger.info(
+            "tts_gtts_synthesized",
+            text_length=len(text),
+            audio_bytes=len(wav_data),
+        )
+        return wav_data
 
     def _synthesize_elevenlabs(self, text: str, voice_id: str) -> bytes:
         """Call the ElevenLabs API and return WAV audio bytes."""

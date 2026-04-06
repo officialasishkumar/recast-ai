@@ -395,7 +395,15 @@ def _run_consumer() -> None:
     """Main consumer loop with reconnection support."""
     global _healthy
 
-    llm_client = LLMClient(api_key=settings.anthropic_api_key, model=settings.llm_model)
+    # Resolve provider + API key
+    provider = settings.llm_provider
+    if provider == "gemini":
+        api_key = settings.gemini_api_key
+    elif provider == "openai":
+        api_key = settings.openai_api_key
+    else:
+        api_key = settings.anthropic_api_key
+    llm_client = LLMClient(provider=provider, api_key=api_key, model=settings.llm_model)
     minio_client = _connect_minio()
     pg_conn = _connect_postgres()
     redis_client = _connect_redis()
