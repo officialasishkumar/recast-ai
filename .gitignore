@@ -1,5 +1,10 @@
 # Binaries
 /bin/
+/api-gateway
+/upload-service
+/frame-extractor
+/mux-service
+/delivery-service
 *.exe
 *.exe~
 *.dll
