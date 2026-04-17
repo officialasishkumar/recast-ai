@@ -143,7 +143,8 @@ export async function register(
 /* ------------------------------------------------------------------ */
 
 export async function getJobs(): Promise<Job[]> {
-  return request<Job[]>("/jobs");
+  const res = await request<{ jobs: Job[] } | Job[]>("/jobs");
+  return Array.isArray(res) ? res : res.jobs ?? [];
 }
 
 export async function getJob(id: string): Promise<Job> {
@@ -191,5 +192,6 @@ export async function updateTranscript(
 /* ------------------------------------------------------------------ */
 
 export async function getVoices(): Promise<Voice[]> {
-  return request<Voice[]>("/voices");
+  const res = await request<{ voices: Voice[] } | Voice[]>("/voices");
+  return Array.isArray(res) ? res : res.voices ?? [];
 }
