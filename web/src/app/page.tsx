@@ -1,215 +1,161 @@
 import Link from "next/link";
-import {
-  Upload,
-  BrainCircuit,
-  AudioLines,
-  Download,
-  Check,
-  X,
-} from "lucide-react";
+import { Upload, BrainCircuit, AudioLines, Download } from "lucide-react";
 import { Button } from "@/components/ui/button";
 
-const features = [
-  {
-    icon: Upload,
-    title: "Upload",
-    description:
-      "Drag & drop any screen recording. We support MP4, MOV, WebM, and more.",
-  },
-  {
-    icon: BrainCircuit,
-    title: "AI Analysis",
-    description:
-      "Our vision model analyzes every frame, understanding context and on-screen actions.",
-  },
-  {
-    icon: AudioLines,
-    title: "Voice Synthesis",
-    description:
-      "Choose from dozens of natural-sounding AI voices to narrate your video.",
-  },
-  {
-    icon: Download,
-    title: "Export",
-    description:
-      "Download the finished video with perfectly synced narration, ready to share.",
-  },
+const steps = [
+  { icon: Upload, label: "Upload", caption: "Drop in any screen capture" },
+  { icon: BrainCircuit, label: "Analyze", caption: "Vision model reads every frame" },
+  { icon: AudioLines, label: "Synthesize", caption: "Frame-accurate TTS" },
+  { icon: Download, label: "Export", caption: "Muxed video, ready to ship" },
 ];
 
-const pricingFree = [
-  "5 minutes per month",
-  "720p export",
-  "3 voice options",
-  "Community support",
-];
-
-const pricingPro = [
-  "Unlimited minutes",
-  "4K export",
-  "All premium voices",
-  "Priority support",
-  "Custom voice cloning",
-  "Webhook integrations",
-];
+const bars = Array.from({ length: 64 }, (_, i) => {
+  const h = 18 + Math.abs(Math.sin(i * 0.62) * 70) + (i % 6) * 3;
+  return Math.min(Math.round(h), 92);
+});
 
 export default function HomePage() {
   return (
     <div className="relative overflow-hidden">
-      {/* Gradient backdrop */}
-      <div className="pointer-events-none absolute -top-40 left-1/2 h-[600px] w-[900px] -translate-x-1/2 rounded-full bg-indigo-600/10 blur-3xl" />
+      <div className="pointer-events-none absolute inset-x-0 top-0 -z-10 h-[760px]">
+        <div className="absolute left-1/2 top-[-120px] h-[720px] w-[1200px] -translate-x-1/2 rounded-full bg-indigo-600/15 blur-[120px]" />
+        <div className="absolute left-[20%] top-[120px] h-[340px] w-[340px] rounded-full bg-fuchsia-600/10 blur-[100px]" />
+      </div>
 
       {/* Hero */}
-      <section className="relative mx-auto max-w-5xl px-4 pb-20 pt-28 text-center sm:px-6">
-        <span className="mb-4 inline-block rounded-full border border-indigo-700/60 bg-indigo-900/30 px-3 py-1 text-xs font-medium text-indigo-300">
-          Now in public beta
-        </span>
-        <h1 className="text-4xl font-bold tracking-tight text-white sm:text-5xl md:text-6xl">
-          Turn any screen recording into a{" "}
-          <span className="text-indigo-400">professionally narrated</span> video
-        </h1>
-        <p className="mx-auto mt-6 max-w-2xl text-lg text-slate-400">
-          Upload your raw screen capture and let Recast AI analyze the content,
-          generate a script, and produce studio-quality narration — all in
-          minutes.
-        </p>
-        <div className="mt-10 flex flex-col items-center justify-center gap-4 sm:flex-row">
-          <Link href="/register">
-            <Button size="lg">Get started free</Button>
-          </Link>
-          <Link href="/login">
-            <Button variant="outline" size="lg">
-              Sign in
-            </Button>
-          </Link>
+      <section className="mx-auto grid max-w-6xl grid-cols-1 items-center gap-16 px-6 pb-24 pt-24 lg:grid-cols-[1.05fr_1fr] lg:pt-32">
+        <div>
+          <div className="mb-7 inline-flex items-center gap-3 text-[11px] uppercase tracking-[0.24em] text-slate-400">
+            <span className="h-px w-8 bg-slate-700" />
+            Narration, automated
+          </div>
+          <h1 className="text-[44px] font-semibold leading-[1.03] tracking-tight text-white sm:text-6xl md:text-[76px]">
+            Recordings that
+            <br />
+            <span className="font-[450] italic text-amber-200/95">
+              speak for themselves.
+            </span>
+          </h1>
+          <p className="mt-7 max-w-md text-lg leading-relaxed text-slate-400">
+            Drop in a screen recording. Get back studio-quality narration,
+            frame-synced and ready to ship.
+          </p>
+          <div className="mt-10 flex flex-wrap items-center gap-x-7 gap-y-3">
+            <Link href="/register">
+              <Button size="lg">Start narrating →</Button>
+            </Link>
+            <Link
+              href="/login"
+              className="text-sm text-slate-400 transition-colors hover:text-slate-200"
+            >
+              Already have an account?{" "}
+              <span className="underline underline-offset-4">Sign in</span>
+            </Link>
+          </div>
+        </div>
+
+        {/* App preview */}
+        <div className="relative">
+          <div className="absolute -inset-8 -z-10 rounded-[32px] bg-gradient-to-br from-indigo-500/15 via-fuchsia-500/5 to-transparent blur-3xl" />
+          <div className="overflow-hidden rounded-2xl border border-slate-800/80 bg-slate-900/70 shadow-2xl shadow-indigo-950/40 backdrop-blur">
+            {/* window chrome */}
+            <div className="flex items-center justify-between border-b border-slate-800/80 px-5 py-3">
+              <div className="flex items-center gap-1.5">
+                <span className="h-2.5 w-2.5 rounded-full bg-slate-700" />
+                <span className="h-2.5 w-2.5 rounded-full bg-slate-700" />
+                <span className="h-2.5 w-2.5 rounded-full bg-slate-700" />
+              </div>
+              <span className="num-tab text-[11px] tracking-wide text-slate-500">
+                onboarding-demo.mp4 · 02:14
+              </span>
+              <span className="rounded-md border border-emerald-500/30 bg-emerald-500/10 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wider text-emerald-300">
+                live
+              </span>
+            </div>
+
+            {/* waveform */}
+            <div className="px-6 pt-6">
+              <div className="relative flex h-24 items-end justify-between gap-[3px]">
+                {bars.map((h, i) => (
+                  <span
+                    key={i}
+                    className="wave-bar w-[3px] origin-bottom rounded-full bg-gradient-to-t from-indigo-600/40 to-indigo-300"
+                    style={{
+                      height: `${h}px`,
+                      animation: `wave-pulse ${1.8 + (i % 5) * 0.15}s ease-in-out ${(i % 9) * 0.08}s infinite`,
+                    }}
+                  />
+                ))}
+                <span
+                  className="playhead absolute inset-y-[-6px] left-0 w-px bg-amber-200/80 shadow-[0_0_12px_rgba(253,230,138,0.6)]"
+                  style={{ animation: "playhead-sweep 6s linear infinite" }}
+                />
+              </div>
+              <div className="num-tab mt-2 flex justify-between text-[10px] tracking-wider text-slate-600">
+                <span>00:00</span>
+                <span>00:30</span>
+                <span>01:00</span>
+                <span>01:30</span>
+                <span>02:00</span>
+              </div>
+            </div>
+
+            {/* transcript */}
+            <div className="border-t border-slate-800/80 px-6 py-5">
+              <div className="space-y-3 font-mono text-[13px] leading-relaxed text-slate-300">
+                <div className="flex gap-4">
+                  <span className="num-tab shrink-0 text-slate-600">00:04</span>
+                  <span>
+                    Let&apos;s open the{" "}
+                    <span className="rounded bg-indigo-500/20 px-1 text-indigo-200">
+                      dashboard
+                    </span>{" "}
+                    and review today&apos;s jobs.
+                  </span>
+                </div>
+                <div className="flex gap-4 opacity-70">
+                  <span className="num-tab shrink-0 text-slate-600">00:09</span>
+                  <span>Each row tracks a video through the pipeline…</span>
+                </div>
+                <div className="flex gap-4 opacity-40">
+                  <span className="num-tab shrink-0 text-slate-600">00:14</span>
+                  <span>…with a frame-level transcript beneath.</span>
+                </div>
+              </div>
+            </div>
+          </div>
         </div>
       </section>
 
-      {/* Features */}
-      <section className="relative mx-auto max-w-6xl px-4 py-20 sm:px-6">
-        <h2 className="text-center text-2xl font-bold text-white sm:text-3xl">
-          How it works
-        </h2>
-        <p className="mx-auto mt-3 max-w-xl text-center text-slate-400">
-          Four simple steps from raw footage to polished narrated video.
-        </p>
-
-        <div className="mt-14 grid gap-6 sm:grid-cols-2 lg:grid-cols-4">
-          {features.map((f, i) => {
-            const Icon = f.icon;
+      {/* Process */}
+      <section className="mx-auto max-w-6xl border-t border-slate-900 px-6 py-14">
+        <div className="grid grid-cols-1 gap-x-8 gap-y-10 sm:grid-cols-2 lg:grid-cols-4">
+          {steps.map((s, i) => {
+            const Icon = s.icon;
             return (
-              <div
-                key={f.title}
-                className="group rounded-xl border border-slate-800 bg-slate-900/50 p-6 transition-colors hover:border-slate-700"
-              >
-                <div className="mb-4 flex h-11 w-11 items-center justify-center rounded-lg bg-indigo-600/20 text-indigo-400 transition-colors group-hover:bg-indigo-600/30">
-                  <Icon className="h-5 w-5" />
+              <div key={s.label} className="group relative">
+                <div className="num-tab mb-4 text-[11px] tracking-[0.22em] text-slate-600">
+                  0{i + 1} /04
                 </div>
-                <div className="mb-1 text-xs font-medium text-indigo-400">
-                  Step {i + 1}
+                <div className="mb-3 flex h-9 w-9 items-center justify-center rounded-lg border border-slate-800 bg-slate-900 text-indigo-300 transition-colors group-hover:border-slate-700 group-hover:text-indigo-200">
+                  <Icon className="h-4 w-4" />
                 </div>
-                <h3 className="text-base font-semibold text-slate-100">
-                  {f.title}
-                </h3>
-                <p className="mt-2 text-sm leading-relaxed text-slate-400">
-                  {f.description}
-                </p>
+                <div className="text-sm font-medium text-slate-100">
+                  {s.label}
+                </div>
+                <div className="mt-1 text-[13px] leading-relaxed text-slate-500">
+                  {s.caption}
+                </div>
               </div>
             );
           })}
         </div>
       </section>
 
-      {/* Pricing */}
-      <section className="relative mx-auto max-w-4xl px-4 py-20 sm:px-6">
-        <h2 className="text-center text-2xl font-bold text-white sm:text-3xl">
-          Simple, transparent pricing
-        </h2>
-        <p className="mx-auto mt-3 max-w-lg text-center text-slate-400">
-          Start for free, upgrade when you need more.
-        </p>
-
-        <div className="mt-14 grid gap-8 sm:grid-cols-2">
-          {/* Free */}
-          <div className="rounded-xl border border-slate-800 bg-slate-900/50 p-8">
-            <h3 className="text-lg font-semibold text-slate-100">Free</h3>
-            <div className="mt-2">
-              <span className="text-4xl font-bold text-white">$0</span>
-              <span className="text-slate-500"> / month</span>
-            </div>
-            <ul className="mt-6 space-y-3">
-              {pricingFree.map((item) => (
-                <li
-                  key={item}
-                  className="flex items-center gap-2 text-sm text-slate-300"
-                >
-                  <Check className="h-4 w-4 text-emerald-400" />
-                  {item}
-                </li>
-              ))}
-              {["Custom voice cloning", "Webhook integrations"].map((item) => (
-                <li
-                  key={item}
-                  className="flex items-center gap-2 text-sm text-slate-500"
-                >
-                  <X className="h-4 w-4 text-slate-600" />
-                  {item}
-                </li>
-              ))}
-            </ul>
-            <Link href="/register" className="mt-8 block">
-              <Button variant="outline" className="w-full">
-                Get started
-              </Button>
-            </Link>
-          </div>
-
-          {/* Pro */}
-          <div className="rounded-xl border border-indigo-600/50 bg-indigo-600/5 p-8 ring-1 ring-indigo-600/20">
-            <div className="flex items-center gap-2">
-              <h3 className="text-lg font-semibold text-slate-100">Pro</h3>
-              <span className="rounded-full bg-indigo-600/30 px-2 py-0.5 text-xs font-medium text-indigo-300">
-                Popular
-              </span>
-            </div>
-            <div className="mt-2">
-              <span className="text-4xl font-bold text-white">$29</span>
-              <span className="text-slate-500"> / month</span>
-            </div>
-            <ul className="mt-6 space-y-3">
-              {pricingPro.map((item) => (
-                <li
-                  key={item}
-                  className="flex items-center gap-2 text-sm text-slate-300"
-                >
-                  <Check className="h-4 w-4 text-indigo-400" />
-                  {item}
-                </li>
-              ))}
-            </ul>
-            <Link href="/register" className="mt-8 block">
-              <Button className="w-full">Upgrade to Pro</Button>
-            </Link>
-          </div>
-        </div>
-      </section>
-
-      {/* CTA */}
-      <section className="relative mx-auto max-w-3xl px-4 py-20 text-center sm:px-6">
-        <h2 className="text-2xl font-bold text-white sm:text-3xl">
-          Ready to recast your videos?
-        </h2>
-        <p className="mt-3 text-slate-400">
-          Join thousands of creators who save hours every week with AI narration.
-        </p>
-        <Link href="/register" className="mt-8 inline-block">
-          <Button size="lg">Start for free</Button>
-        </Link>
-      </section>
-
-      {/* Footer */}
-      <footer className="border-t border-slate-800 py-8">
-        <div className="mx-auto max-w-7xl px-4 text-center text-xs text-slate-500 sm:px-6">
-          Recast AI &mdash; AI-powered video narration platform.
+      <footer className="border-t border-slate-900 py-6">
+        <div className="mx-auto flex max-w-6xl items-center justify-between px-6 text-xs text-slate-500">
+          <span>Recast AI</span>
+          <span className="num-tab">v0.1 · 2026</span>
         </div>
       </footer>
     </div>
