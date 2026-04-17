@@ -41,7 +41,8 @@ export default function SettingsPage() {
       router.push("/login");
     }
     // In production, fetch user profile from /me endpoint and call setProfile
-  }, [router]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   async function saveProfile() {
     setSaving(true);

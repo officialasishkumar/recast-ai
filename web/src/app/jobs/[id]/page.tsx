@@ -83,7 +83,8 @@ export default function JobDetailPage({
       return;
     }
     loadJob();
-  }, [loadJob, router]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [id]);
 
   // WebSocket for real-time updates.
   const jobStatus = job?.status;
