@@ -1,14 +1,27 @@
 import type { Metadata } from "next";
-import { Inter } from "next/font/google";
+import { Inter, JetBrains_Mono } from "next/font/google";
 import "./globals.css";
 import { Navbar } from "@/components/navbar";
+import { cn } from "@/lib/utils";
 
-const inter = Inter({ subsets: ["latin"] });
+const inter = Inter({
+  subsets: ["latin"],
+  variable: "--font-inter",
+  display: "swap",
+  weight: ["400", "500", "600", "700"],
+});
+
+const jetbrains = JetBrains_Mono({
+  subsets: ["latin"],
+  variable: "--font-jetbrains",
+  display: "swap",
+  weight: ["400", "500", "600"],
+});
 
 export const metadata: Metadata = {
-  title: "Recast AI - Turn Screen Recordings into Narrated Videos",
+  title: "Recast AI — Narration, automated",
   description:
-    "Upload any screen recording and Recast AI will analyze, transcribe, and produce a professionally narrated version with AI voices.",
+    "Drop in a screen recording. Get back studio-quality narration, frame-synced and ready to ship.",
 };
 
 export default function RootLayout({
@@ -17,8 +30,11 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="en" className={`${inter.className} dark h-full antialiased`}>
-      <body className="flex min-h-full flex-col bg-slate-950 text-slate-100">
+    <html
+      lang="en"
+      className={cn(inter.variable, jetbrains.variable, "dark h-full")}
+    >
+      <body className="flex min-h-full flex-col bg-bg text-text antialiased">
         <Navbar />
         <main className="flex-1">{children}</main>
       </body>

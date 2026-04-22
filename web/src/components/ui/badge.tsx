@@ -3,16 +3,24 @@ import { cva, type VariantProps } from "class-variance-authority";
 import { cn } from "@/lib/utils";
 
 const badgeVariants = cva(
-  "inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium transition-colors",
+  [
+    "inline-flex items-center gap-1 rounded-full px-2.5 py-0.5",
+    "text-xs font-medium uppercase tracking-wide",
+    "border transition-colors",
+  ].join(" "),
   {
     variants: {
       variant: {
-        default: "bg-slate-700 text-slate-200",
-        green: "bg-emerald-900/60 text-emerald-400 border border-emerald-700",
-        blue: "bg-blue-900/60 text-blue-400 border border-blue-700",
-        yellow: "bg-amber-900/60 text-amber-400 border border-amber-700",
-        red: "bg-red-900/60 text-red-400 border border-red-700",
-        indigo: "bg-indigo-900/60 text-indigo-400 border border-indigo-700",
+        default:
+          "bg-bg-elev text-text-muted border-border",
+        success:
+          "bg-[color-mix(in_oklab,var(--success)_15%,transparent)] text-success border-[color-mix(in_oklab,var(--success)_30%,transparent)]",
+        warning:
+          "bg-[color-mix(in_oklab,var(--warn)_15%,transparent)] text-warn border-[color-mix(in_oklab,var(--warn)_30%,transparent)]",
+        danger:
+          "bg-[color-mix(in_oklab,var(--danger)_15%,transparent)] text-danger border-[color-mix(in_oklab,var(--danger)_30%,transparent)]",
+        info:
+          "bg-[color-mix(in_oklab,var(--accent)_15%,transparent)] text-accent border-[color-mix(in_oklab,var(--accent)_35%,transparent)]",
       },
     },
     defaultVariants: {

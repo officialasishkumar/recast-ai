@@ -6,12 +6,19 @@ type InputProps = React.InputHTMLAttributes<HTMLInputElement>;
 const Input = React.forwardRef<HTMLInputElement, InputProps>(
   ({ className, type, ...props }, ref) => (
     <input
+      ref={ref}
       type={type}
       className={cn(
-        "flex h-10 w-full rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-sm text-slate-100 placeholder:text-slate-500 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 focus-visible:ring-offset-2 focus-visible:ring-offset-slate-900 disabled:cursor-not-allowed disabled:opacity-50",
+        "flex h-12 w-full rounded-lg bg-bg-elev border border-border",
+        "px-4 text-base text-text placeholder:text-text-muted",
+        "transition-[border-color,box-shadow] duration-150",
+        "hover:border-border-hover",
+        "focus-visible:outline-none focus-visible:border-accent",
+        "focus-visible:shadow-[0_0_0_3px_color-mix(in_oklab,var(--accent)_25%,transparent)]",
+        "disabled:cursor-not-allowed disabled:opacity-50",
+        "[font-feature-settings:'ss01','cv11']",
         className
       )}
-      ref={ref}
       {...props}
     />
   )
