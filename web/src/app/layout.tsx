@@ -2,6 +2,12 @@ import type { Metadata } from "next";
 import { Inter, JetBrains_Mono } from "next/font/google";
 import "./globals.css";
 import { Navbar } from "@/components/navbar";
+import { Toaster } from "@/components/toaster";
+import {
+  ShortcutHint,
+  ShortcutsOverlay,
+  ShortcutsProvider,
+} from "@/components/shortcuts";
 import { cn } from "@/lib/utils";
 
 const inter = Inter({
@@ -35,8 +41,13 @@ export default function RootLayout({
       className={cn(inter.variable, jetbrains.variable, "dark h-full")}
     >
       <body className="flex min-h-full flex-col bg-bg text-text antialiased">
-        <Navbar />
-        <main className="flex-1">{children}</main>
+        <ShortcutsProvider>
+          <Navbar />
+          <main className="flex-1">{children}</main>
+          <ShortcutsOverlay />
+          <ShortcutHint />
+        </ShortcutsProvider>
+        <Toaster />
       </body>
     </html>
   );
