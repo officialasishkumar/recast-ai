@@ -1,16 +1,16 @@
 # Recast AI
 
-AI-powered video narration platform — converts screen recordings into professionally narrated videos with word-level synchronized voice-over.
+Recast AI converts any screen recording into a professionally narrated video — powered by a single Gemini 2.5 video analysis call and a word-level TTS alignment engine.
 
 ## Overview
 
-Recast AI is an end-to-end cloud platform that ingests a video, extracts visual and audio context using a multimodal LLM, produces a word-level timestamped transcript, synthesizes natural speech using a TTS engine, dynamically adjusts speech rate to fit within scene boundaries, and delivers the final muxed video — all within a single secure, asynchronous pipeline.
+Upload a video. Recast AI hands the whole file to Google Gemini 2.5 in a single multimodal call, receives back a fully scoped, timestamped transcript, synthesizes speech per segment with a neural TTS provider, aligns speech to the video at the word level, and mux-delivers the final narrated output. The entire pipeline is asynchronous, horizontally scalable, and fault isolated behind RabbitMQ queues.
 
 ## Architecture
 
 ```
                     ┌──────────┐
-                    │  Web UI  │  Next.js 15
+                    │  Web UI  │  Next.js 16
                     └────┬─────┘
                          │
                     ┌────▼─────┐
@@ -27,20 +27,14 @@ Recast AI is an end-to-end cloud platform that ingests a video, extracts visual 
           │
    [Ingestion Queue] ─── RabbitMQ
           │
-    ┌─────▼──────────┐
-    │ Frame Extractor │  Go + FFmpeg
-    └─────┬──────────┘
-          │
-    [Frames Queue]
-          │
     ┌─────▼──────────────┐
-    │  LLM Orchestrator  │  Python + Claude API
+    │  Video Analyzer    │  Python + Gemini File API
     └─────┬──────────────┘
           │
     [Transcript Queue]
           │
     ┌─────▼──────────┐
-    │  TTS Service   │  Python + ElevenLabs/Polly
+    │  TTS Service   │  Python + ElevenLabs/Polly/gTTS
     └─────┬──────────┘
           │
     [Audio Queue]
@@ -56,56 +50,50 @@ Recast AI is an end-to-end cloud platform that ingests a video, extracts visual 
     └────────────────────┘
 ```
 
-Each processing stage is a stateless consumer reading from a message queue and writing results back to the next queue + object storage. No stage calls another directly, giving the system horizontal scalability, fault isolation, and natural retry semantics.
+Each processing stage is a stateless consumer reading from a message queue and writing results back to the next queue plus object storage. No stage calls another directly, giving the system horizontal scalability, fault isolation, and natural retry semantics.
 
 ## Tech Stack
 
 | Layer | Technology |
 |---|---|
-| Frontend | Next.js 15, TypeScript, Tailwind CSS |
+| Frontend | Next.js 16, React 19, TypeScript, Tailwind CSS |
 | API Gateway | Go, Chi router, JWT auth, WebSocket |
-| Workers | Go (frame extraction, mux, delivery) |
-| AI Services | Python, FastAPI (LLM orchestrator, TTS) |
+| Workers | Go (upload, mux, delivery) |
+| AI Services | Python, FastAPI (video-analyzer, TTS) |
 | Message Queue | RabbitMQ (with DLQ per queue) |
 | Database | PostgreSQL 17 |
 | Cache | Redis 7 |
 | Object Storage | MinIO (S3-compatible) |
-| LLM | Anthropic Claude (multimodal) |
-| TTS | ElevenLabs / AWS Polly (configurable) |
+| LLM | Google Gemini 2.5 Pro / Flash |
+| TTS | ElevenLabs / AWS Polly / gTTS (configurable) |
 | Video Processing | FFmpeg |
 
 ## Quick Start
 
 ### Prerequisites
 
-- Docker & Docker Compose
+- Docker and Docker Compose
 - Go 1.25+
 - Node.js 20+
 - Python 3.12+
+- A Google Gemini API key
 
 ### Setup
 
 ```bash
-# Clone the repository
 git clone https://github.com/officialasishkumar/recast-ai.git
 cd recast-ai
-
-# Run the setup script
-./scripts/setup.sh
-
-# Or manually:
-cp .env.example .env       # Edit with your API keys
-make up                     # Start everything
+cp .env.example .env
+# Edit .env and set GEMINI_API_KEY; optionally set ELEVENLABS_API_KEY
+# or AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY for Polly.
+make up
 ```
 
 ### Start All Services
 
 ```bash
-# Start everything with Docker Compose
-make up
-
-# Or start infrastructure only (for local Go/Python development)
-make dev
+make up      # Start full stack via Docker Compose
+make dev     # Start infrastructure only (Postgres, RabbitMQ, MinIO, Redis)
 ```
 
 ### Access Points
@@ -124,15 +112,10 @@ recast-ai/
 ├── cmd/                          # Go service entry points
 │   ├── api-gateway/              # HTTP API server
 │   ├── upload-service/           # Chunked upload handler
-│   ├── frame-extractor/          # FFmpeg frame extraction worker
 │   ├── mux-service/              # FFmpeg audio/video mux worker
 │   └── delivery-service/         # Final delivery + webhooks
 ├── internal/                     # Go internal packages
 │   ├── gateway/                  # API gateway handlers & middleware
-│   │   ├── handler/              # HTTP handlers (auth, jobs, voices)
-│   │   ├── middleware/           # Auth, rate limiting
-│   │   └── websocket/            # Real-time job progress
-│   ├── extractor/                # FFmpeg helpers
 │   ├── muxer/                    # Mux helpers
 │   └── delivery/                 # Webhook delivery
 ├── pkg/                          # Shared Go packages
@@ -140,22 +123,19 @@ recast-ai/
 │   ├── config/                   # Environment-based configuration
 │   ├── database/                 # PostgreSQL connection
 │   ├── models/                   # Domain types & queue messages
+│   ├── observability/            # OTLP, metrics, structured logging
 │   ├── queue/                    # RabbitMQ wrapper
+│   ├── resilience/               # Circuit breaker, retry, backoff
 │   └── storage/                  # S3/MinIO wrapper
 ├── services/                     # Python services
-│   ├── llm-orchestrator/         # Multimodal LLM transcript generation
-│   │   └── orchestrator/         # Prompt building, LLM client, validation
-│   └── tts-service/              # Text-to-speech synthesis
-│       └── tts/                  # Synthesizer, speed control
-├── web/                          # Next.js 15 frontend
-│   └── src/
-│       ├── app/                  # Pages (dashboard, jobs, settings)
-│       ├── components/           # Reusable UI components
-│       └── lib/                  # API client, WebSocket, utilities
+│   ├── video-analyzer/           # Gemini File API transcript generation
+│   └── tts-service/              # Text-to-speech synthesis + alignment
+├── web/                          # Next.js 16 frontend
 ├── migrations/                   # PostgreSQL schema migrations
 ├── docker/                       # Dockerfiles for all services
 ├── scripts/                      # Development scripts
-├── .github/workflows/            # CI/CD (build, test, deploy)
+├── test/                         # e2e regression harness + sample video
+├── .github/workflows/            # CI/CD (build, test, e2e, CodeQL)
 ├── docker-compose.yml            # Full local development stack
 └── Makefile                      # Development commands
 ```
@@ -163,29 +143,50 @@ recast-ai/
 ## API Endpoints
 
 ### Authentication
+
 | Method | Endpoint | Description |
 |---|---|---|
-| POST | `/v1/auth/register` | Register with email + password |
-| POST | `/v1/auth/login` | Login, returns JWT + refresh token |
+| POST | `/v1/auth/register` | Register with email and password |
+| POST | `/v1/auth/login` | Login, returns JWT and refresh token |
 | POST | `/v1/auth/refresh` | Refresh JWT token |
 | GET | `/v1/auth/me` | Get current user profile |
 
 ### Jobs
+
 | Method | Endpoint | Description |
 |---|---|---|
 | POST | `/v1/jobs` | Create a new video processing job |
 | GET | `/v1/jobs` | List user's jobs |
 | GET | `/v1/jobs/:id` | Get job details |
 | DELETE | `/v1/jobs/:id` | Delete a job |
-| GET | `/v1/jobs/:id/transcript` | Get word-level transcript |
+| GET | `/v1/jobs/:id/transcript` | Get transcript segments |
 | PATCH | `/v1/jobs/:id/transcript` | Update transcript segments |
+| POST | `/v1/jobs/:id/segments/:segmentId/regenerate` | Re-synthesize a single segment |
+| POST | `/v1/jobs/:id/share` | Mint a public share token |
 | GET | `/v1/jobs/:id/export` | Get download URL |
 | WS | `/v1/ws/jobs/:id` | Real-time job progress |
 
 ### Voices
+
 | Method | Endpoint | Description |
 |---|---|---|
 | GET | `/v1/voices` | List available TTS voices |
+
+### Uploads
+
+| Method | Endpoint | Description |
+|---|---|---|
+| POST | `/v1/uploads` | Initiate a multipart upload |
+| PUT | `/v1/uploads/:id/parts/:n` | Upload a single part |
+| POST | `/v1/uploads/:id/complete` | Finalize the upload |
+
+### Public
+
+| Method | Endpoint | Description |
+|---|---|---|
+| GET | `/v1/public/shares/:token` | Unauthenticated share view — returns job, transcript, and output URL |
+
+See [docs/api.md](docs/api.md) for full request and response samples.
 
 ## Development
 
@@ -206,17 +207,17 @@ make redis-cli     # Open Redis shell
 
 ### Running Services Locally
 
-For local development, start infrastructure with `make dev`, then run individual services:
+For local development, start infrastructure with `make dev`, then run individual services.
 
 ```bash
 # Go services
 go run ./cmd/api-gateway
-go run ./cmd/frame-extractor
+go run ./cmd/upload-service
 go run ./cmd/mux-service
 go run ./cmd/delivery-service
 
 # Python services
-cd services/llm-orchestrator && python main.py
+cd services/video-analyzer && python main.py
 cd services/tts-service && python main.py
 
 # Frontend
@@ -225,43 +226,57 @@ cd web && npm run dev
 
 ### Environment Variables
 
-Copy `.env.example` to `.env` and configure:
+Copy `.env.example` to `.env` and configure the keys that matter for your target TTS provider.
 
-- `ANTHROPIC_API_KEY` — Required for LLM transcript generation
-- `ELEVENLABS_API_KEY` — Required for real TTS (set `TTS_PROVIDER=mock` for development)
-- `JWT_SECRET` — Change for production
-- OAuth credentials (optional for dev)
-- Stripe keys (optional for dev)
+- `GEMINI_API_KEY` — Required for video analysis.
+- `ELEVENLABS_API_KEY` — Optional. Enables ElevenLabs TTS plus native word alignment.
+- `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_REGION` — Optional. Enables AWS Polly.
+- `JWT_SECRET` — Must be rotated for production.
+- OAuth credentials — Optional for dev.
+
+When no TTS provider is configured, the service falls back to `gTTS` with proportional word timing.
 
 ## Message Queue Design
 
-Five logical queues, each with a Dead Letter Queue (DLQ):
+Four logical queues, each with a Dead Letter Queue (DLQ).
 
 | Queue | Producer | Consumer |
 |---|---|---|
-| `ingestion.queue` | Upload Service | Frame Extractor |
-| `frames.queue` | Frame Extractor | LLM Orchestrator |
-| `transcript.queue` | LLM Orchestrator | TTS Service |
+| `ingestion.queue` | Upload Service | Video Analyzer |
+| `transcript.queue` | Video Analyzer | TTS Service |
 | `audio.queue` | TTS Service | Mux Service |
 | `delivery.queue` | Mux Service | Delivery Service |
 
-Idempotency is ensured via `stage_attempt_id` UUIDs — duplicate messages are silently dropped.
+Idempotency is ensured via `stage_attempt_id` UUIDs. Duplicate messages are silently dropped.
 
 ## Security
 
-- JWT authentication (HS256) with 15-minute expiry and rotating refresh tokens
-- LLM prompt injection defense: input sanitization, sandboxed prompts, output schema validation, content policy filter
-- Rate limiting per user (token-bucket via Redis)
-- All inter-service communication via private queues
-- Pre-signed URLs for S3 access (1-hour expiry)
-- CORS restricted to frontend origin
+- JWT authentication (HS256) with 15-minute expiry and rotating refresh tokens.
+- LLM prompt injection defense: schema-constrained Gemini output, system-instruction hardening, and explicit instructions to ignore on-screen text.
+- Rate limiting per user (token-bucket via Redis).
+- All inter-service communication via private queues.
+- Pre-signed URLs for object storage access (1-hour expiry).
+- CORS restricted to frontend origin.
+- Share tokens are 64-character opaque URL-safe strings bound to a single job.
 
 ## CI/CD
 
-GitHub Actions pipelines:
+GitHub Actions pipelines.
 
-- **CI** (`ci.yml`): Runs on every push/PR to `main` — Go tests, Python linting, frontend build, Docker image builds
-- **Deploy** (`deploy.yml`): Triggered on version tags — builds and pushes images to GHCR, deploys to staging/production
+- **CI** (`ci.yml`): Go tests, Python linting, frontend build, Docker image builds on every push and PR to `main`.
+- **E2E** (`e2e.yml`): Runs the committed sample-recording regression harness against a full compose stack.
+- **CodeQL** (`codeql.yml`): Static security analysis on Go, Python, and TypeScript.
+- **Deploy** (`deploy.yml`): Triggered on version tags — builds and pushes images to GHCR, deploys to staging and production.
+
+## Documentation
+
+| Doc | Description |
+|---|---|
+| [docs/architecture.md](docs/architecture.md) | Service-by-service architecture and data model |
+| [docs/api.md](docs/api.md) | Full REST API reference |
+| [docs/gemini-integration.md](docs/gemini-integration.md) | Gemini File API flow, token costs, failure modes |
+| [docs/contributing.md](docs/contributing.md) | Local dev setup, adding consumers, tests, conventions |
+| [docs/REFACTOR_CONTRACT.md](docs/REFACTOR_CONTRACT.md) | Refactor contract shared across parallel agents |
 
 ## License
 
