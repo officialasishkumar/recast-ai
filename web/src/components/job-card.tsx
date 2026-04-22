@@ -41,6 +41,7 @@ const IN_PROGRESS_STAGES: readonly JobStage[] = [
 ];
 
 const STAGE_LABEL: Record<JobStage, string> = {
+  pending: "Pending",
   uploaded: "Pending",
   analyzing: "Analyzing",
   transcribed: "Transcribed",

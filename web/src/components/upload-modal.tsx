@@ -39,6 +39,8 @@ type ExtendedVoice = ApiVoice & {
   accent?: string;
   provider?: string;
   sample_url?: string;
+  preview_url?: string;
+  language?: string;
 };
 
 interface UploadModalProps {

@@ -55,6 +55,7 @@ const TRANSCRIPT_STAGES: JobStage[] = [
 ];
 
 const STATUS_LABEL: Record<JobStage, string> = {
+  pending: "Pending",
   uploaded: "Uploaded",
   analyzing: "Analyzing",
   transcribed: "Transcribed",

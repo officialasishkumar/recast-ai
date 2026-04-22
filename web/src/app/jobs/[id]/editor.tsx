@@ -30,7 +30,7 @@ interface WordTiming {
   endMs: number;
 }
 
-interface ExtendedSegment extends TranscriptSegment {
+interface ExtendedSegment extends Omit<TranscriptSegment, "words_json"> {
   words_json?: WordTiming[] | string;
 }
 
@@ -174,7 +174,7 @@ export function TranscriptEditor({
   const activeSegmentId = useMemo(() => {
     const active = localSegments.find(
       (seg) =>
-        activeMs >= seg.start * 1000 - 10 && activeMs <= seg.end * 1000 + 10
+        activeMs >= seg.start_ms - 10 && activeMs <= seg.end_ms + 10
     );
     return active?.id ?? null;
   }, [activeMs, localSegments]);
@@ -301,7 +301,7 @@ export function TranscriptEditor({
         {localSegments.map((seg) => {
           const dirty = dirtyIds.includes(seg.id);
           const active = activeSegmentId === seg.id;
-          const words = parseWordTimings(seg as ExtendedSegment);
+          const words = parseWordTimings(seg as unknown as ExtendedSegment);
 
           return (
             <article
@@ -343,28 +343,28 @@ export function TranscriptEditor({
               <div className="mb-2 flex items-center gap-2">
                 <button
                   type="button"
-                  onClick={() => onSeek?.(Math.floor(seg.start * 1000))}
+                  onClick={() => onSeek?.(Math.floor(seg.start_ms))}
                   className={cn(
                     "num-tab rounded-md border border-border bg-bg-elev px-2 py-0.5 text-[11px]",
                     "text-text-muted transition-colors hover:border-border-hover hover:text-text focus-ring"
                   )}
-                  aria-label={`Jump to ${formatTimecode(seg.start)}`}
+                  aria-label={`Jump to ${formatTimecode(seg.start_ms / 1000)}`}
                 >
-                  {formatTimecode(seg.start)}
+                  {formatTimecode(seg.start_ms / 1000)}
                 </button>
                 <span aria-hidden="true" className="text-text-dim">
                   <CornerDownLeft className="h-3 w-3 rotate-180" />
                 </span>
                 <button
                   type="button"
-                  onClick={() => onSeek?.(Math.floor(seg.end * 1000))}
+                  onClick={() => onSeek?.(Math.floor(seg.end_ms))}
                   className={cn(
                     "num-tab rounded-md border border-border bg-bg-elev px-2 py-0.5 text-[11px]",
                     "text-text-muted transition-colors hover:border-border-hover hover:text-text focus-ring"
                   )}
-                  aria-label={`Jump to ${formatTimecode(seg.end)}`}
+                  aria-label={`Jump to ${formatTimecode(seg.end_ms / 1000)}`}
                 >
-                  {formatTimecode(seg.end)}
+                  {formatTimecode(seg.end_ms / 1000)}
                 </button>
                 {dirty && (
                   <Badge variant="warning" className="ml-1">
@@ -407,14 +407,14 @@ export function TranscriptEditor({
               <AutoSizingTextarea
                 value={seg.text}
                 onChange={(next) => updateText(seg.id, next)}
-                label={`Edit segment ${formatTimecode(seg.start)}`}
+                label={`Edit segment ${formatTimecode(seg.start_ms / 1000)}`}
               />
 
               <div className="mt-2.5 flex items-center justify-end gap-1.5">
                 <Button
                   size="sm"
                   variant="ghost"
-                  onClick={() => onSeek?.(Math.floor(seg.start * 1000))}
+                  onClick={() => onSeek?.(Math.floor(seg.start_ms))}
                 >
                   <Play className="h-3.5 w-3.5" strokeWidth={2.25} />
                   Play segment

@@ -61,7 +61,7 @@ function buildWaveformBars(
   }
 
   const duration = Math.max(
-    ...segments.map((seg) => seg.end * 1000),
+    ...segments.map((seg) => seg.end_ms),
     1
   );
   const bars: number[] = new Array(count).fill(0);
@@ -69,17 +69,17 @@ function buildWaveformBars(
     const barStart = (i / count) * duration;
     const barEnd = ((i + 1) / count) * duration;
     const overlapping = segments.filter(
-      (seg) => seg.end * 1000 >= barStart && seg.start * 1000 <= barEnd
+      (seg) => seg.end_ms >= barStart && seg.start_ms <= barEnd
     );
     if (overlapping.length === 0) {
       bars[i] = 0.12;
       continue;
     }
     const density = overlapping.reduce((acc, seg) => {
-      const segDurationMs = Math.max((seg.end - seg.start) * 1000, 1);
+      const segDurationMs = Math.max(seg.end_ms - seg.start_ms, 1);
       const textWeight = Math.min(seg.text.length / 140, 1.2);
       const overlap =
-        Math.min(barEnd, seg.end * 1000) - Math.max(barStart, seg.start * 1000);
+        Math.min(barEnd, seg.end_ms) - Math.max(barStart, seg.start_ms);
       const share = Math.max(overlap, 0) / segDurationMs;
       return acc + textWeight * share;
     }, 0);

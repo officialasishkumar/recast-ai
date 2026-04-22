@@ -10,8 +10,8 @@ import { notifyAuthChange } from "@/components/navbar";
 import {
   AudioLines,
   ArrowRight,
-  Chrome,
-  Github,
+  Globe as Chrome,
+  Code2 as Github,
   Sparkles,
   CheckCircle2,
 } from "lucide-react";

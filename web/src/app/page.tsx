@@ -11,7 +11,7 @@ import {
   Share2,
   Terminal,
   ArrowRight,
-  Github,
+  Code2 as Github,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 

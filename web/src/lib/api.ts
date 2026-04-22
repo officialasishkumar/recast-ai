@@ -440,6 +440,14 @@ function uploadChunkXhr(
   });
 }
 
+/**
+ * Legacy single-shot upload that posts the FormData to /jobs.
+ * Retained as a fallback for callers that pre-date the chunked API.
+ */
+export async function createJob(fd: FormData): Promise<Job> {
+  return http<Job>("/jobs", { method: "POST", body: fd });
+}
+
 /** Finalize a chunked upload and kick off the job. */
 export async function completeUpload(
   uploadId: string,
