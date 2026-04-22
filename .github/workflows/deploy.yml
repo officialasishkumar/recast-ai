@@ -4,6 +4,8 @@ on:
   push:
     tags:
       - "v*"
+    branches:
+      - main
   workflow_dispatch:
     inputs:
       environment:
@@ -14,30 +16,46 @@ on:
           - staging
           - production
 
+permissions:
+  contents: read
+  packages: write
+
 env:
   REGISTRY: ghcr.io
   IMAGE_PREFIX: ghcr.io/${{ github.repository_owner }}/recast-ai
 
+concurrency:
+  group: deploy-${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
   build-push:
-    name: Build & Push Images
+    name: Build & Push (${{ matrix.service }})
     runs-on: ubuntu-latest
     permissions:
       contents: read
       packages: write
     strategy:
+      fail-fast: false
       matrix:
-        service:
-          - api-gateway
-          - upload-service
-          - frame-extractor
-          - mux-service
-          - delivery-service
-          - llm-orchestrator
-          - tts-service
-          - web
+        include:
+          - service: api-gateway
+            dockerfile: docker/api-gateway.Dockerfile
+          - service: upload-service
+            dockerfile: docker/upload-service.Dockerfile
+          - service: mux-service
+            dockerfile: docker/mux-service.Dockerfile
+          - service: delivery-service
+            dockerfile: docker/delivery-service.Dockerfile
+          - service: video-analyzer
+            dockerfile: docker/video-analyzer.Dockerfile
+          - service: tts-service
+            dockerfile: docker/tts-service.Dockerfile
+          - service: web
+            dockerfile: docker/web.Dockerfile
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout source
+        uses: actions/checkout@v4
 
       - name: Log in to GHCR
         uses: docker/login-action@v3
@@ -45,6 +63,9 @@ jobs:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
@@ -57,26 +78,54 @@ jobs:
           tags: |
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
-            type=sha
+            type=ref,event=branch
+            type=sha,format=long
 
-      - name: Build and push
+      - name: Build and push image
         uses: docker/build-push-action@v6
         with:
           context: .
-          file: docker/${{ matrix.service }}.Dockerfile
+          file: ${{ matrix.dockerfile }}
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          cache-from: type=gha,scope=${{ matrix.service }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.service }}
 
   deploy:
     name: Deploy to ${{ inputs.environment || 'staging' }}
     needs: build-push
     runs-on: ubuntu-latest
+    if: github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/v')
     environment: ${{ inputs.environment || 'staging' }}
+    permissions:
+      contents: read
+    env:
+      # Runtime secrets are referenced here so the target environment must
+      # provision them. They are never echoed to logs.
+      GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+      ELEVENLABS_API_KEY: ${{ secrets.ELEVENLABS_API_KEY }}
+      AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+      JWT_SECRET: ${{ secrets.JWT_SECRET }}
+      GOOGLE_CLIENT_ID: ${{ secrets.GOOGLE_CLIENT_ID }}
+      GOOGLE_CLIENT_SECRET: ${{ secrets.GOOGLE_CLIENT_SECRET }}
+      GITHUB_CLIENT_ID: ${{ secrets.GH_OAUTH_CLIENT_ID }}
+      GITHUB_CLIENT_SECRET: ${{ secrets.GH_OAUTH_CLIENT_SECRET }}
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout source
+        uses: actions/checkout@v4
+
+      - name: Validate required secrets exist
+        run: |
+          missing=0
+          for name in GEMINI_API_KEY JWT_SECRET; do
+            if [ -z "${!name}" ]; then
+              echo "::warning::secret $name is not set in this environment"
+              missing=$((missing + 1))
+            fi
+          done
+          echo "Missing secret count: $missing"
 
       - name: Deploy notification
         run: |

@@ -1,0 +1,95 @@
+"area:frontend":
+  - changed-files:
+      - any-glob-to-any-file:
+          - "web/**"
+
+"area:backend":
+  - changed-files:
+      - any-glob-to-any-file:
+          - "cmd/**"
+          - "internal/**"
+          - "pkg/**"
+          - "services/**"
+
+"area:video-analyzer":
+  - changed-files:
+      - any-glob-to-any-file:
+          - "services/video-analyzer/**"
+          - "docker/video-analyzer.Dockerfile"
+
+"area:tts":
+  - changed-files:
+      - any-glob-to-any-file:
+          - "services/tts-service/**"
+          - "docker/tts-service.Dockerfile"
+
+"area:gateway":
+  - changed-files:
+      - any-glob-to-any-file:
+          - "cmd/api-gateway/**"
+          - "internal/gateway/**"
+
+"area:upload":
+  - changed-files:
+      - any-glob-to-any-file:
+          - "cmd/upload-service/**"
+
+"area:mux":
+  - changed-files:
+      - any-glob-to-any-file:
+          - "cmd/mux-service/**"
+
+"area:delivery":
+  - changed-files:
+      - any-glob-to-any-file:
+          - "cmd/delivery-service/**"
+
+"area:shared-go":
+  - changed-files:
+      - any-glob-to-any-file:
+          - "pkg/**"
+
+"area:migrations":
+  - changed-files:
+      - any-glob-to-any-file:
+          - "migrations/**"
+
+"area:infra":
+  - changed-files:
+      - any-glob-to-any-file:
+          - "docker/**"
+          - "docker-compose.yml"
+          - "Makefile"
+          - ".env.example"
+          - "scripts/**"
+          - "render.yaml"
+
+"area:ci":
+  - changed-files:
+      - any-glob-to-any-file:
+          - ".github/workflows/**"
+          - ".github/labeler.yml"
+          - ".github/dependabot.yml"
+
+"area:docs":
+  - changed-files:
+      - any-glob-to-any-file:
+          - "README.md"
+          - "docs/**"
+          - "product-spec.md"
+
+"area:tests":
+  - changed-files:
+      - any-glob-to-any-file:
+          - "test/**"
+          - "**/*_test.go"
+          - "**/tests/**"
+
+"type:dependencies":
+  - changed-files:
+      - any-glob-to-any-file:
+          - "go.mod"
+          - "go.sum"
+          - "web/package.json"
+          - "web/package-lock.json"
+          - "services/**/requirements.txt"

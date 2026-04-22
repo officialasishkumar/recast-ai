@@ -6,10 +6,19 @@ on:
   pull_request:
     branches: [main]
 
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   go-lint-test:
     name: Go Lint & Test
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     services:
       postgres:
         image: postgres:17-alpine
@@ -34,12 +43,20 @@ jobs:
           --health-timeout 5s
           --health-retries 5
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout source
+        uses: actions/checkout@v4
 
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
           go-version: "1.25"
+          cache: true
+
+      - name: Install golangci-lint
+        uses: golangci/golangci-lint-action@v6
+        with:
+          version: v1.62
+          args: --timeout=5m
 
       - name: Run migrations
         env:
@@ -49,48 +66,85 @@ jobs:
           PGDATABASE: recast
         run: psql -f migrations/001_init.up.sql
 
-      - name: Run tests
+      - name: Go vet
+        run: go vet ./...
+
+      - name: Run tests with coverage
         env:
           DB_HOST: localhost
           REDIS_HOST: localhost
-        run: go test -race -coverprofile=coverage.txt -covermode=atomic ./...
+        run: |
+          go test -race -coverprofile=coverage.txt -covermode=atomic \
+            ./pkg/... \
+            ./cmd/... \
+            ./internal/...
+
+      - name: Verify observability coverage
+        run: go test -race -count=1 ./pkg/observability/...
+
+      - name: Verify resilience coverage
+        run: go test -race -count=1 ./pkg/resilience/...
 
       - name: Upload coverage
         uses: actions/upload-artifact@v4
         with:
           name: go-coverage
           path: coverage.txt
+          if-no-files-found: warn
 
   python-lint-test:
-    name: Python Lint & Test
+    name: Python Lint & Test (${{ matrix.service }})
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     strategy:
+      fail-fast: false
       matrix:
-        service: [llm-orchestrator, tts-service]
+        service: [video-analyzer, tts-service]
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout source
+        uses: actions/checkout@v4
 
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+          cache: "pip"
+          cache-dependency-path: services/${{ matrix.service }}/requirements.txt
 
       - name: Install dependencies
         run: |
+          python -m pip install --upgrade pip
           pip install -r services/${{ matrix.service }}/requirements.txt
-          pip install ruff pytest
+          pip install ruff pytest pytest-asyncio mypy
 
-      - name: Lint
+      - name: Ruff lint
         run: ruff check services/${{ matrix.service }}/
 
-      - name: Type check (optional)
-        run: ruff check --select=E,W services/${{ matrix.service }}/ || true
+      - name: Ruff format check
+        run: ruff format --check services/${{ matrix.service }}/ || true
+
+      - name: Mypy (best effort)
+        run: |
+          if [ -f services/${{ matrix.service }}/mypy.ini ] || \
+             [ -f services/${{ matrix.service }}/pyproject.toml ]; then
+            mypy services/${{ matrix.service }}/ || true
+          else
+            echo "No mypy config found; skipping strict type check."
+          fi
+
+      - name: Pytest
+        working-directory: services/${{ matrix.service }}
+        run: pytest -v tests/
 
   web-lint-build:
     name: Frontend Lint & Build
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout source
+        uses: actions/checkout@v4
 
       - name: Set up Node.js
         uses: actions/setup-node@v4
@@ -99,20 +153,26 @@ jobs:
           cache: "npm"
           cache-dependency-path: web/package-lock.json
 
-      - name: Install
-        run: cd web && npm ci
+      - name: Install dependencies
+        working-directory: web
+        run: npm ci
 
       - name: Lint
-        run: cd web && npm run lint
+        working-directory: web
+        run: npm run lint
 
       - name: Build
-        run: cd web && npm run build
+        working-directory: web
         env:
           NEXT_PUBLIC_API_URL: http://localhost:8080/v1
+          NEXT_PUBLIC_WS_URL: ws://localhost:8080/v1
+        run: npm run build
 
   docker-build:
-    name: Docker Build
+    name: Docker Build (${{ matrix.service }})
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     needs: [go-lint-test, python-lint-test, web-lint-build]
     strategy:
       fail-fast: false
@@ -120,24 +180,25 @@ jobs:
         service:
           - api-gateway
           - upload-service
-          - frame-extractor
           - mux-service
           - delivery-service
-          - llm-orchestrator
+          - video-analyzer
           - tts-service
           - web
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout source
+        uses: actions/checkout@v4
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      - name: Build image
+      - name: Build image (no push)
         uses: docker/build-push-action@v6
         with:
           context: .
           file: docker/${{ matrix.service }}.Dockerfile
           push: false
+          load: false
           tags: recast-ai/${{ matrix.service }}:${{ github.sha }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          cache-from: type=gha,scope=${{ matrix.service }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.service }}
