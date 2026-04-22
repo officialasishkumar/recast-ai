@@ -12,12 +12,19 @@ import (
 
 // Queue names used across services.
 const (
-	IngestionQueue = "ingestion.queue"
-	FramesQueue    = "frames.queue"
+	IngestionQueue  = "ingestion.queue"
 	TranscriptQueue = "transcript.queue"
-	AudioQueue     = "audio.queue"
-	DeliveryQueue  = "delivery.queue"
+	AudioQueue      = "audio.queue"
+	DeliveryQueue   = "delivery.queue"
 )
+
+// AllQueues lists every queue that must be declared on startup.
+var AllQueues = []string{
+	IngestionQueue,
+	TranscriptQueue,
+	AudioQueue,
+	DeliveryQueue,
+}
 
 // DLQ suffix.
 const dlqSuffix = ".dlq"

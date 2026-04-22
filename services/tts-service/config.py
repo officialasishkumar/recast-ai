@@ -25,7 +25,9 @@ class Settings(BaseSettings):
     rabbitmq_port: int = Field(default=5672, description="RabbitMQ AMQP port")
     rabbitmq_user: str = Field(default="guest", description="RabbitMQ username")
     rabbitmq_password: str = Field(default="guest", description="RabbitMQ password")
-    rabbitmq_url_override: str = Field(default="", description="Full AMQP(S) URL — overrides individual fields")
+    rabbitmq_url_override: str = Field(
+        default="", description="Full AMQP(S) URL that overrides individual fields"
+    )
 
     # --- S3 / MinIO ---
     s3_endpoint: str = Field(default="localhost:9000", description="S3-compatible endpoint")
@@ -44,15 +46,30 @@ class Settings(BaseSettings):
     db_password: str = Field(default="recast", description="PostgreSQL password")
     db_name: str = Field(default="recastai", description="PostgreSQL database name")
 
-    # --- TTS ---
-    elevenlabs_api_key: str = Field(default="", description="ElevenLabs API key")
+    # --- TTS providers ---
     tts_provider: str = Field(
-        default="elevenlabs",
-        description="TTS provider: elevenlabs or polly",
+        default="gtts",
+        description="TTS provider: elevenlabs, polly, or gtts",
+    )
+    elevenlabs_api_key: str = Field(default="", description="ElevenLabs API key (optional)")
+    elevenlabs_model_id: str = Field(
+        default="eleven_multilingual_v2",
+        description="ElevenLabs model identifier",
+    )
+
+    # AWS Polly credentials (all optional)
+    aws_access_key_id: str = Field(default="", description="AWS access key id")
+    aws_secret_access_key: str = Field(default="", description="AWS secret access key")
+    aws_region: str = Field(default="us-east-1", description="AWS region for Polly")
+    polly_engine: str = Field(
+        default="neural", description="Polly engine: standard or neural"
     )
 
     # --- Logging ---
     log_level: str = Field(default="INFO", description="Log level (DEBUG, INFO, WARNING, ERROR)")
+
+    # --- Database ---
+    db_sslmode: str = Field(default="disable", description="PostgreSQL sslmode")
 
     # --- Derived helpers ---
 
@@ -64,9 +81,6 @@ class Settings(BaseSettings):
             f"amqp://{self.rabbitmq_user}:{self.rabbitmq_password}"
             f"@{self.rabbitmq_host}:{self.rabbitmq_port}/"
         )
-
-    # --- Database ---
-    db_sslmode: str = Field(default="disable", description="PostgreSQL sslmode")
 
     @property
     def dsn(self) -> str:
@@ -84,8 +98,12 @@ class Settings(BaseSettings):
 
     @property
     def is_dev_mode(self) -> bool:
-        """True when no real TTS API key is configured."""
-        return not self.elevenlabs_api_key
+        """True when the selected provider lacks credentials."""
+        if self.tts_provider == "elevenlabs":
+            return not self.elevenlabs_api_key
+        if self.tts_provider == "polly":
+            return not (self.aws_access_key_id and self.aws_secret_access_key)
+        return False
 
 
 settings = Settings()

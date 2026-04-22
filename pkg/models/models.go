@@ -7,66 +7,66 @@ import (
 
 // User roles.
 const (
+	// RoleGuest identifies an anonymous or unauthenticated principal.
 	RoleGuest = "guest"
-	RoleFree  = "free"
-	RolePro   = "pro"
+	// RoleUser identifies a standard authenticated user.
+	RoleUser = "user"
+	// RoleAdmin identifies a privileged administrator.
 	RoleAdmin = "admin"
 )
 
 // Job stages.
 const (
-	StageUploaded        = "uploaded"
-	StageFrameExtracting = "frame_extracting"
-	StageFrameExtracted  = "frame_extracted"
-	StageTranscribing    = "transcribing"
-	StageTranscribed     = "transcribed"
-	StageSynthesizing    = "synthesizing"
-	StageSynthesized     = "synthesized"
-	StageMuxing          = "muxing"
-	StageMuxed           = "muxed"
-	StageDelivering      = "delivering"
-	StageCompleted       = "completed"
-	StageFailed          = "failed"
+	StageUploaded     = "uploaded"
+	StageAnalyzing    = "analyzing"
+	StageAnalyzed     = "analyzed"
+	StageTranscribing = "transcribing"
+	StageTranscribed  = "transcribed"
+	StageSynthesizing = "synthesizing"
+	StageSynthesized  = "synthesized"
+	StageMuxing       = "muxing"
+	StageMuxed        = "muxed"
+	StageDelivering   = "delivering"
+	StageCompleted    = "completed"
+	StageFailed       = "failed"
 )
 
 // User represents a platform user.
 type User struct {
-	ID           string         `db:"id" json:"id"`
-	Email        string         `db:"email" json:"email"`
-	PasswordHash sql.NullString `db:"password_hash" json:"-"`
-	Name         string         `db:"name" json:"name"`
-	Role         string         `db:"role" json:"role"`
+	ID            string         `db:"id" json:"id"`
+	Email         string         `db:"email" json:"email"`
+	PasswordHash  sql.NullString `db:"password_hash" json:"-"`
+	Name          string         `db:"name" json:"name"`
+	Role          string         `db:"role" json:"role"`
 	OAuthProvider sql.NullString `db:"oauth_provider" json:"-"`
-	OAuthID      sql.NullString `db:"oauth_id" json:"-"`
-	AvatarURL    sql.NullString `db:"avatar_url" json:"avatar_url,omitempty"`
-	MinutesUsed  int            `db:"minutes_used" json:"minutes_used"`
-	MinutesQuota int            `db:"minutes_quota" json:"minutes_quota"`
-	StripeID     sql.NullString `db:"stripe_customer_id" json:"-"`
-	CreatedAt    time.Time      `db:"created_at" json:"created_at"`
-	UpdatedAt    time.Time      `db:"updated_at" json:"updated_at"`
+	OAuthID       sql.NullString `db:"oauth_id" json:"-"`
+	AvatarURL     sql.NullString `db:"avatar_url" json:"avatar_url,omitempty"`
+	CreatedAt     time.Time      `db:"created_at" json:"created_at"`
+	UpdatedAt     time.Time      `db:"updated_at" json:"updated_at"`
 }
 
 // Job represents a video processing job.
 type Job struct {
-	ID             string         `db:"id" json:"id"`
-	UserID         string         `db:"user_id" json:"user_id"`
-	Stage          string         `db:"stage" json:"stage"`
-	OriginalFile   string         `db:"original_file" json:"original_file"`
-	OriginalName   string         `db:"original_name" json:"original_name"`
-	DurationMs     int64          `db:"duration_ms" json:"duration_ms"`
-	VoiceID        string         `db:"voice_id" json:"voice_id"`
-	Style          string         `db:"style" json:"style"`
-	Language       string         `db:"language" json:"language"`
-	Priority       int            `db:"priority" json:"priority"`
-	FramesPath     sql.NullString `db:"frames_path" json:"frames_path,omitempty"`
-	AudioPath      sql.NullString `db:"audio_path" json:"audio_path,omitempty"`
-	OutputFile     sql.NullString `db:"output_file" json:"output_file,omitempty"`
-	DownloadURL    sql.NullString `db:"download_url" json:"download_url,omitempty"`
-	ErrorMessage   sql.NullString `db:"error_message" json:"error_message,omitempty"`
-	TraceID        string         `db:"trace_id" json:"trace_id"`
-	CreatedAt      time.Time      `db:"created_at" json:"created_at"`
-	UpdatedAt      time.Time      `db:"updated_at" json:"updated_at"`
-	CompletedAt    sql.NullTime   `db:"completed_at" json:"completed_at,omitempty"`
+	ID            string         `db:"id" json:"id"`
+	UserID        string         `db:"user_id" json:"user_id"`
+	Stage         string         `db:"stage" json:"stage"`
+	OriginalFile  string         `db:"original_file" json:"original_file"`
+	OriginalName  string         `db:"original_name" json:"original_name"`
+	DurationMs    int64          `db:"duration_ms" json:"duration_ms"`
+	VoiceID       string         `db:"voice_id" json:"voice_id"`
+	Style         string         `db:"style" json:"style"`
+	Language      string         `db:"language" json:"language"`
+	Priority      int            `db:"priority" json:"priority"`
+	AudioPath     sql.NullString `db:"audio_path" json:"audio_path,omitempty"`
+	OutputFile    sql.NullString `db:"output_file" json:"output_file,omitempty"`
+	DownloadURL   sql.NullString `db:"download_url" json:"download_url,omitempty"`
+	ShareToken    sql.NullString `db:"share_token" json:"share_token,omitempty"`
+	ThumbnailPath sql.NullString `db:"thumbnail_path" json:"thumbnail_path,omitempty"`
+	ErrorMessage  sql.NullString `db:"error_message" json:"error_message,omitempty"`
+	TraceID       string         `db:"trace_id" json:"trace_id"`
+	CreatedAt     time.Time      `db:"created_at" json:"created_at"`
+	UpdatedAt     time.Time      `db:"updated_at" json:"updated_at"`
+	CompletedAt   sql.NullTime   `db:"completed_at" json:"completed_at,omitempty"`
 }
 
 // TranscriptSegment represents a single narration segment with word-level timestamps.
@@ -94,12 +94,11 @@ type Word struct {
 
 // Voice represents a TTS voice option.
 type Voice struct {
-	ID       string `db:"id" json:"id"`
-	Name     string `db:"name" json:"name"`
-	Gender   string `db:"gender" json:"gender"`
-	Accent   string `db:"accent" json:"accent"`
-	Provider string `db:"provider" json:"provider"`
-	ProOnly  bool   `db:"pro_only" json:"pro_only"`
+	ID        string `db:"id" json:"id"`
+	Name      string `db:"name" json:"name"`
+	Gender    string `db:"gender" json:"gender"`
+	Accent    string `db:"accent" json:"accent"`
+	Provider  string `db:"provider" json:"provider"`
 	SampleURL string `db:"sample_url" json:"sample_url"`
 }
 
@@ -130,27 +129,21 @@ type IngestionPayload struct {
 	VoiceID      string `json:"voice_id"`
 	Style        string `json:"style"`
 	Language     string `json:"language"`
-}
-
-// FramesPayload is published after frame extraction.
-type FramesPayload struct {
-	FramesPrefix string `json:"frames_prefix"`
-	AudioFile    string `json:"audio_file"`
-	FrameCount   int    `json:"frame_count"`
-	DurationMs   int64  `json:"duration_ms"`
+	DurationMs   int64  `json:"duration_ms,omitempty"`
 }
 
 // TranscriptPayload is published after LLM transcript generation.
 type TranscriptPayload struct {
-	Segments []TranscriptSegment `json:"segments"`
-	VoiceID  string              `json:"voice_id"`
+	Segments   []TranscriptSegment `json:"segments"`
+	VoiceID    string              `json:"voice_id"`
+	DurationMs int64               `json:"duration_ms,omitempty"`
 }
 
 // AudioPayload is published after TTS synthesis.
 type AudioPayload struct {
-	AudioFile     string `json:"audio_file"`
-	OriginalFile  string `json:"original_file"`
-	DurationMs    int64  `json:"duration_ms"`
+	AudioFile    string `json:"audio_file"`
+	OriginalFile string `json:"original_file"`
+	DurationMs   int64  `json:"duration_ms"`
 }
 
 // DeliveryPayload is published after muxing.
@@ -159,7 +152,7 @@ type DeliveryPayload struct {
 	UserID     string `json:"user_id"`
 }
 
-// WebSocket event sent to frontend.
+// JobEvent is a WebSocket event sent to the frontend.
 type JobEvent struct {
 	Event      string  `json:"event"`
 	JobID      string  `json:"job_id"`

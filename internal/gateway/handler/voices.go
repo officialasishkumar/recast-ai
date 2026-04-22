@@ -25,30 +25,14 @@ type exportResponse struct {
 
 // ---------- handlers ----------
 
-// ListVoices returns all available voices. Voices marked pro_only are excluded
-// for free-tier users unless they have the "pro" or "admin" role.
+// ListVoices returns all available voices.
 //
 //	GET /v1/voices
 func (d *Deps) ListVoices(w http.ResponseWriter, r *http.Request) {
-	claims := mw.ClaimsFromContext(r.Context())
-
-	// Determine whether to include pro-only voices.
-	includePro := false
-	if claims != nil && (claims.Role == models.RolePro || claims.Role == models.RoleAdmin) {
-		includePro = true
-	}
-
 	var voices []models.Voice
-	var err error
-	if includePro {
-		err = d.DB.SelectContext(r.Context(), &voices,
-			`SELECT id, name, gender, accent, provider, pro_only, sample_url
-			 FROM voices ORDER BY name`)
-	} else {
-		err = d.DB.SelectContext(r.Context(), &voices,
-			`SELECT id, name, gender, accent, provider, pro_only, sample_url
-			 FROM voices WHERE pro_only = false ORDER BY name`)
-	}
+	err := d.DB.SelectContext(r.Context(), &voices,
+		`SELECT id, name, gender, accent, provider, sample_url
+		 FROM voices ORDER BY name`)
 	if err != nil {
 		d.Logger.Error("list voices: query", "error", err)
 		writeErr(w, http.StatusInternalServerError, "internal server error")

@@ -20,6 +20,13 @@ func ClaimsFromContext(ctx context.Context) *auth.Claims {
 	return c
 }
 
+// WithClaims returns a copy of ctx with the given Claims attached. It is
+// intended for tests and for internal callers that set claims outside the
+// JWTAuth middleware path.
+func WithClaims(ctx context.Context, c *auth.Claims) context.Context {
+	return context.WithValue(ctx, claimsKey, c)
+}
+
 // JWTAuth returns middleware that validates the Bearer token in the
 // Authorization header using the provided Auth configuration. On success the
 // parsed Claims are stored in the request context; on failure a 401 JSON

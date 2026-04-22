@@ -1,10 +1,10 @@
 """TTS Service entry point.
 
 Consumes transcript payloads from ``transcript.queue``, synthesizes
-speech for each segment using ElevenLabs (or a silent placeholder in
-dev mode), adjusts playback speed to match target segment durations,
-concatenates all segment audio into a final file, uploads results to
-MinIO, and publishes the next stage message to ``audio.queue``.
+speech per segment using the configured provider, rescales each clip to
+match the scene duration, aggregates word-level timings, uploads the
+per-segment audio to MinIO, updates the database row, and publishes the
+next-stage message to ``audio.queue``.
 
 A lightweight FastAPI health-check server runs in a background thread.
 """
@@ -13,9 +13,7 @@ from __future__ import annotations
 
 import io
 import json
-import os
 import signal
-import tempfile
 import threading
 import time
 import uuid
@@ -33,8 +31,9 @@ from fastapi import FastAPI
 from minio import Minio
 
 from config import settings
-from tts.speed import adjust_speed, concatenate_audio, get_audio_duration
-from tts.synthesizer import TTSSynthesizer
+from tts.alignment import align_words_to_segment
+from tts.speed_control import FitResult, fit_to_segment
+from tts.synthesizer import SynthesisResult, TTSProvider, build_provider
 
 # --------------------------------------------------------------------------- #
 # Logging
@@ -65,6 +64,9 @@ logger = structlog.get_logger("tts_service")
 
 TRANSCRIPT_QUEUE = "transcript.queue"
 AUDIO_QUEUE = "audio.queue"
+
+SEGMENT_MIME = "audio/mpeg"
+SEGMENT_EXT = "mp3"
 
 # --------------------------------------------------------------------------- #
 # Health-check server
@@ -118,7 +120,6 @@ def _connect_rabbitmq() -> pika.BlockingConnection:
 
 
 def _declare_queues(channel: pika.adapters.blocking_connection.BlockingChannel) -> None:
-    """Declare the queues this service uses (with DLQs)."""
     for queue_name in (TRANSCRIPT_QUEUE, AUDIO_QUEUE):
         dlq = f"{queue_name}.dlq"
         channel.queue_declare(queue=dlq, durable=True)
@@ -172,17 +173,16 @@ def _connect_redis() -> redis.Redis:
 
 
 # --------------------------------------------------------------------------- #
-# MinIO upload helpers
+# MinIO upload helper
 # --------------------------------------------------------------------------- #
 
 
-def _upload_to_minio(
+def _upload_bytes(
     minio_client: Minio,
     object_name: str,
     data: bytes,
-    content_type: str = "audio/wav",
+    content_type: str,
 ) -> None:
-    """Upload bytes to MinIO."""
     minio_client.put_object(
         settings.s3_bucket,
         object_name,
@@ -193,79 +193,86 @@ def _upload_to_minio(
     logger.debug("minio_uploaded", object_name=object_name, size=len(data))
 
 
-def _upload_file_to_minio(
-    minio_client: Minio,
-    object_name: str,
-    file_path: str,
-    content_type: str = "audio/wav",
-) -> None:
-    """Upload a local file to MinIO."""
-    minio_client.fput_object(
-        settings.s3_bucket,
-        object_name,
-        file_path,
-        content_type=content_type,
-    )
-    logger.debug("minio_file_uploaded", object_name=object_name)
-
-
 # --------------------------------------------------------------------------- #
 # Database helpers
 # --------------------------------------------------------------------------- #
 
 
-def _update_segment_audio(
+def _update_segment_record(
     pg_conn: psycopg2.extensions.connection,
     job_id: str,
     segment_idx: int,
     audio_path: str,
     flagged: bool,
+    words: list[dict[str, int | str]],
 ) -> None:
-    """Update the audio_path and flagged status of a segment."""
+    """Persist audio path, flag, and word-level timings for a segment."""
     with pg_conn.cursor() as cur:
         cur.execute(
             """
             UPDATE transcript_segments
-            SET audio_path = %s, flagged = %s
-            WHERE job_id = %s AND segment_idx = %s
+               SET audio_path = %s,
+                   flagged    = %s,
+                   words_json = %s::jsonb
+             WHERE job_id = %s
+               AND segment_idx = %s
             """,
-            (audio_path, flagged, job_id, segment_idx),
+            (
+                audio_path,
+                flagged,
+                json.dumps(words),
+                job_id,
+                segment_idx,
+            ),
         )
     pg_conn.commit()
 
 
-def _update_job_synthesized(
+def _mark_job_synthesized(
     pg_conn: psycopg2.extensions.connection,
     job_id: str,
-    audio_path: str,
 ) -> None:
-    """Update the job to synthesized stage."""
     with pg_conn.cursor() as cur:
         cur.execute(
             """
             UPDATE jobs
-            SET stage = 'synthesized', audio_path = %s, updated_at = NOW()
-            WHERE id = %s
+               SET stage = 'synthesized',
+                   updated_at = NOW()
+             WHERE id = %s
             """,
-            (audio_path, job_id),
+            (job_id,),
         )
     pg_conn.commit()
 
 
-def _get_job_original_file(
+def _fetch_segments_by_id(
     pg_conn: psycopg2.extensions.connection,
     job_id: str,
-) -> str:
-    """Fetch the original_file path for the job."""
-    with pg_conn.cursor() as cur:
+    segment_ids: list[int],
+) -> list[dict[str, Any]]:
+    if not segment_ids:
+        return []
+    with pg_conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
         cur.execute(
-            "SELECT original_file, duration_ms FROM jobs WHERE id = %s",
-            (job_id,),
+            """
+            SELECT segment_idx, start_ms, end_ms, text
+              FROM transcript_segments
+             WHERE job_id = %s
+               AND segment_idx = ANY(%s::int[])
+             ORDER BY segment_idx
+            """,
+            (job_id, segment_ids),
         )
-        row = cur.fetchone()
-        if row is None:
-            raise ValueError(f"job {job_id} not found in database")
-        return row[0]
+        rows = cur.fetchall()
+    return [
+        {
+            "segment_id": int(r["segment_idx"]),
+            "start_ms": int(r["start_ms"]),
+            "end_ms": int(r["end_ms"]),
+            "text": str(r["text"]),
+        }
+        for r in rows
+    ]
 
 
 # --------------------------------------------------------------------------- #
@@ -274,86 +281,68 @@ def _get_job_original_file(
 
 
 def _process_segment(
-    idx: int,
     segment: dict[str, Any],
     job_id: str,
     voice_id: str,
-    synthesizer: TTSSynthesizer,
+    language: str,
+    provider: TTSProvider,
     minio_client: Minio,
     pg_conn: psycopg2.extensions.connection,
-    tmp_dir: str,
-) -> str:
-    """Synthesize, speed-adjust, and upload a single segment.
-
-    Returns the local path of the final (speed-adjusted) WAV file.
-    """
-    text: str = segment.get("text", "")
-    segment_id: int = segment.get("segment_id", idx + 1)
-    start_ms: int = segment.get("start_ms", 0)
-    end_ms: int = segment.get("end_ms", 0)
-    target_duration_ms = end_ms - start_ms
+) -> dict[str, Any]:
+    """Synthesize, fit, align, persist, and return a summary dict."""
+    text: str = str(segment.get("text", "")).strip()
+    segment_id: int = int(segment.get("segment_id", 0))
+    start_ms: int = int(segment.get("start_ms", 0))
+    end_ms: int = int(segment.get("end_ms", 0))
+    target_duration_ms = max(end_ms - start_ms, 0)
 
     logger.info(
         "processing_segment",
         segment_id=segment_id,
         target_ms=target_duration_ms,
+        text_length=len(text),
     )
 
-    # 2a. Synthesize speech
-    audio_bytes = synthesizer.synthesize(text, voice_id)
+    result: SynthesisResult = provider.synthesize(text, voice_id, language)
 
-    # Write raw TTS audio to a temp file
-    raw_path = os.path.join(tmp_dir, f"raw_{idx}.wav")
-    with open(raw_path, "wb") as f:
-        f.write(audio_bytes)
+    fit: FitResult = fit_to_segment(
+        audio_bytes=result.audio_bytes,
+        current_ms=result.duration_ms,
+        target_ms=target_duration_ms or result.duration_ms,
+        mime_type=result.mime_type,
+    )
 
-    # 2b. Measure synthesized duration
-    actual_duration_ms = get_audio_duration(raw_path)
+    words = align_words_to_segment(
+        segment=segment,
+        provider_alignment=result.word_alignments,
+        final_duration_ms=fit.final_duration_ms,
+    )
 
-    # 2c. Calculate speed ratio
-    flagged = False
-    final_path = raw_path
+    object_name = f"audio/{job_id}/{segment_id}.{SEGMENT_EXT}"
+    _upload_bytes(
+        minio_client,
+        object_name=object_name,
+        data=fit.audio_bytes,
+        content_type=SEGMENT_MIME,
+    )
 
-    if target_duration_ms > 0 and actual_duration_ms > 0:
-        ratio = actual_duration_ms / target_duration_ms
+    _update_segment_record(
+        pg_conn=pg_conn,
+        job_id=job_id,
+        segment_idx=segment_id,
+        audio_path=object_name,
+        flagged=fit.speed_flagged,
+        words=words,
+    )
 
-        # 2d. Flag if ratio outside [0.75, 1.5]
-        if ratio < 0.75 or ratio > 1.5:
-            flagged = True
-            logger.warning(
-                "segment_flagged_for_review",
-                segment_id=segment_id,
-                ratio=ratio,
-                actual_ms=actual_duration_ms,
-                target_ms=target_duration_ms,
-            )
-
-        # 2e. Adjust speed if ratio != 1.0
-        if abs(ratio - 1.0) > 0.01:
-            adjusted_path = os.path.join(tmp_dir, f"adjusted_{idx}.wav")
-            adjust_speed(raw_path, adjusted_path, ratio)
-            final_path = adjusted_path
-            logger.info(
-                "speed_adjusted",
-                segment_id=segment_id,
-                ratio=round(ratio, 4),
-            )
-    else:
-        logger.warning(
-            "skip_speed_adjust",
-            segment_id=segment_id,
-            target_ms=target_duration_ms,
-            actual_ms=actual_duration_ms,
-        )
-
-    # 2f. Upload segment audio to MinIO
-    segment_object = f"tts/{job_id}/segment_{idx}.wav"
-    _upload_file_to_minio(minio_client, segment_object, final_path)
-
-    # 2g. Update segment audio_path in DB
-    _update_segment_audio(pg_conn, job_id, segment_id, segment_object, flagged)
-
-    return final_path
+    return {
+        "segment_id": segment_id,
+        "audio_path": object_name,
+        "duration_ms": fit.final_duration_ms,
+        "flagged": fit.speed_flagged,
+        "applied_ratio": fit.applied_ratio,
+        "word_count": len(words),
+    }
 
 
 # --------------------------------------------------------------------------- #
@@ -363,98 +352,120 @@ def _process_segment(
 
 def _process_message(
     body: bytes,
-    synthesizer: TTSSynthesizer,
+    provider: TTSProvider,
     minio_client: Minio,
     pg_conn: psycopg2.extensions.connection,
     redis_client: redis.Redis,
     channel: pika.adapters.blocking_connection.BlockingChannel,
 ) -> None:
-    """Process a single message from transcript.queue."""
+    """Process one message from ``transcript.queue``."""
     msg = json.loads(body)
     job_id: str = msg["job_id"]
     trace_id: str = msg.get("trace_id", "")
-    payload: dict = msg.get("payload", {})
+    payload: dict[str, Any] = msg.get("payload", {}) or {}
 
     structlog.contextvars.bind_contextvars(job_id=job_id, trace_id=trace_id)
-    logger.info("processing_message", queue=TRANSCRIPT_QUEUE)
+    try:
+        logger.info("processing_message", queue=TRANSCRIPT_QUEUE)
 
-    # 1. Parse payload
-    segments: list[dict] = payload.get("segments", [])
-    voice_id: str = payload.get("voice_id", "default")
+        voice_id: str = str(payload.get("voice_id") or "default")
+        language: str = str(payload.get("language") or "en")
 
-    if not segments:
-        raise ValueError(f"no segments in transcript payload for job {job_id}")
+        segments = _select_segments(payload, pg_conn, job_id)
+        if not segments:
+            raise ValueError(f"no segments to synthesize for job {job_id}")
 
-    # Get job metadata
-    original_file = _get_job_original_file(pg_conn, job_id)
+        regen_only = _is_regeneration_request(payload)
 
-    # Process all segments in a temp directory
-    with tempfile.TemporaryDirectory(prefix=f"tts_{job_id}_") as tmp_dir:
-        segment_paths: list[str] = []
-
-        for idx, segment in enumerate(segments):
-            path = _process_segment(
-                idx=idx,
+        summaries: list[dict[str, Any]] = []
+        for segment in segments:
+            summary = _process_segment(
                 segment=segment,
                 job_id=job_id,
                 voice_id=voice_id,
-                synthesizer=synthesizer,
+                language=language,
+                provider=provider,
                 minio_client=minio_client,
                 pg_conn=pg_conn,
-                tmp_dir=tmp_dir,
             )
-            segment_paths.append(path)
+            summaries.append(summary)
 
-        # 3. Concatenate all segment audio files
-        final_path = os.path.join(tmp_dir, "synthesized.wav")
-        concatenate_audio(segment_paths, final_path)
+        if not regen_only:
+            _mark_job_synthesized(pg_conn, job_id)
 
-        # 4. Upload final audio to MinIO
-        final_object = f"audio/{job_id}/synthesized.wav"
-        _upload_file_to_minio(minio_client, final_object, final_path)
+        audio_payload = {
+            "job_id": job_id,
+            "trace_id": trace_id,
+            "stage_attempt_id": str(uuid.uuid4()),
+            "payload": {
+                "segments_count": len(summaries),
+                "voice_id": voice_id,
+                "regenerated_segment_ids": (
+                    [s["segment_id"] for s in summaries] if regen_only else None
+                ),
+            },
+        }
+        channel.basic_publish(
+            exchange="",
+            routing_key=AUDIO_QUEUE,
+            body=json.dumps(audio_payload),
+            properties=pika.BasicProperties(
+                delivery_mode=2,
+                content_type="application/json",
+            ),
+        )
+        logger.info(
+            "published_to_audio_queue",
+            segments_count=len(summaries),
+            regen_only=regen_only,
+        )
 
-        # Get final audio duration
-        final_duration_ms = get_audio_duration(final_path)
+        if not regen_only:
+            event = {
+                "event": "stage_complete",
+                "job_id": job_id,
+                "stage": "synthesized",
+                "progress": 0.80,
+            }
+            redis_client.publish(f"job:{job_id}", json.dumps(event))
+    finally:
+        structlog.contextvars.unbind_contextvars("job_id", "trace_id")
 
-    # 5. Update job in DB
-    _update_job_synthesized(pg_conn, job_id, final_object)
 
-    # 6. Publish AudioPayload to audio.queue
-    audio_payload = {
-        "job_id": job_id,
-        "trace_id": trace_id,
-        "stage_attempt_id": str(uuid.uuid4()),
-        "payload": {
-            "audio_file": final_object,
-            "original_file": original_file,
-            "duration_ms": int(final_duration_ms),
-        },
-    }
-    channel.basic_publish(
-        exchange="",
-        routing_key=AUDIO_QUEUE,
-        body=json.dumps(audio_payload),
-        properties=pika.BasicProperties(
-            delivery_mode=2,
-            content_type="application/json",
-        ),
-    )
-    logger.info(
-        "published_to_audio_queue",
-        segment_count=len(segments),
-        duration_ms=int(final_duration_ms),
-    )
+def _select_segments(
+    payload: dict[str, Any],
+    pg_conn: psycopg2.extensions.connection,
+    job_id: str,
+) -> list[dict[str, Any]]:
+    """Choose the working segments for this message.
 
-    # 7. Publish job event to Redis pub/sub
-    event = {
-        "event": "stage_complete",
-        "job_id": job_id,
-        "stage": "synthesized",
-        "progress": 0.60,
-    }
-    redis_client.publish(f"job:{job_id}", json.dumps(event))
+    A regeneration request sends ``segment_id`` or ``segment_ids`` and we
+    hydrate the rows from Postgres. Full-job messages send ``segments``
+    inline from the video-analyzer.
+    """
+    ids = _regeneration_ids(payload)
+    if ids:
+        return _fetch_segments_by_id(pg_conn, job_id, ids)
 
-    structlog.contextvars.unbind_contextvars("job_id", "trace_id")
+    raw_segments = payload.get("segments") or []
+    out: list[dict[str, Any]] = []
+    for idx, seg in enumerate(raw_segments):
+        seg_dict = dict(seg)
+        seg_dict.setdefault("segment_id", int(seg.get("segment_id", idx + 1)))
+        out.append(seg_dict)
+    return out
+
+
+def _is_regeneration_request(payload: dict[str, Any]) -> bool:
+    return bool(_regeneration_ids(payload))
+
+
+def _regeneration_ids(payload: dict[str, Any]) -> list[int]:
+    if "segment_ids" in payload and payload["segment_ids"]:
+        return [int(v) for v in payload["segment_ids"]]
+    if "segment_id" in payload and payload["segment_id"] is not None:
+        return [int(payload["segment_id"])]
+    return []
 
 
 # --------------------------------------------------------------------------- #
@@ -466,10 +477,21 @@ def _run_consumer() -> None:
     """Main consumer loop with reconnection support."""
     global _healthy
 
-    synthesizer = TTSSynthesizer(
-        provider=settings.tts_provider,
-        api_key=settings.elevenlabs_api_key,
+    provider = build_provider(
+        settings.tts_provider,
+        elevenlabs_api_key=settings.elevenlabs_api_key,
+        elevenlabs_model_id=settings.elevenlabs_model_id,
+        aws_access_key_id=settings.aws_access_key_id,
+        aws_secret_access_key=settings.aws_secret_access_key,
+        aws_region=settings.aws_region,
+        polly_engine=settings.polly_engine,
     )
+    logger.info(
+        "provider_initialized",
+        provider=type(provider).__name__,
+        configured=settings.tts_provider,
+    )
+
     minio_client = _connect_minio()
     pg_conn = _connect_postgres()
     redis_client = _connect_redis()
@@ -484,18 +506,22 @@ def _run_consumer() -> None:
 
             logger.info("consumer_started", queue=TRANSCRIPT_QUEUE)
 
-            for method, properties, body in channel.consume(
+            for method, _properties, body in channel.consume(
                 TRANSCRIPT_QUEUE, inactivity_timeout=30
             ):
                 if not _healthy:
                     break
-
                 if method is None:
                     continue
 
                 try:
                     _process_message(
-                        body, synthesizer, minio_client, pg_conn, redis_client, channel
+                        body,
+                        provider,
+                        minio_client,
+                        pg_conn,
+                        redis_client,
+                        channel,
                     )
                     channel.basic_ack(delivery_tag=method.delivery_tag)
                     logger.info("message_acked", delivery_tag=method.delivery_tag)
@@ -520,7 +546,6 @@ def _run_consumer() -> None:
                 with suppress(Exception):
                     rmq_conn.close()
 
-    # Cleanup
     with suppress(Exception):
         pg_conn.close()
     with suppress(Exception):
@@ -545,12 +570,10 @@ def main() -> None:
     signal.signal(signal.SIGINT, _signal_handler)
     signal.signal(signal.SIGTERM, _signal_handler)
 
-    # Start the health-check server in a daemon thread
     health_thread = threading.Thread(target=_run_health_server, daemon=True)
     health_thread.start()
     logger.info("health_server_started", port=8081)
 
-    # Run the consumer on the main thread
     _run_consumer()
 
 

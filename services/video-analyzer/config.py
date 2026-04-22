@@ -1,8 +1,8 @@
-"""Configuration for the LLM Orchestrator service.
+"""Configuration for the Video Analyzer service.
 
-Loads settings from environment variables with sensible defaults for local
-development.  Uses pydantic-settings so every value can be overridden via
-an env var or a .env file placed next to this module.
+Loads settings from environment variables with sensible defaults for
+local development. Uses pydantic-settings so every value can be
+overridden via an env var or a .env file placed next to this module.
 """
 
 from __future__ import annotations
@@ -12,7 +12,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
-    """LLM Orchestrator configuration."""
+    """Video Analyzer configuration."""
 
     model_config = SettingsConfigDict(
         env_file=".env",
@@ -25,7 +25,10 @@ class Settings(BaseSettings):
     rabbitmq_port: int = Field(default=5672, description="RabbitMQ AMQP port")
     rabbitmq_user: str = Field(default="guest", description="RabbitMQ username")
     rabbitmq_password: str = Field(default="guest", description="RabbitMQ password")
-    rabbitmq_url_override: str = Field(default="", description="Full AMQP(S) URL — overrides individual fields")
+    rabbitmq_url_override: str = Field(
+        default="",
+        description="Full AMQP(S) URL, overrides individual fields",
+    )
 
     # --- S3 / MinIO ---
     s3_endpoint: str = Field(default="localhost:9000", description="S3-compatible endpoint")
@@ -43,19 +46,31 @@ class Settings(BaseSettings):
     db_user: str = Field(default="recast", description="PostgreSQL user")
     db_password: str = Field(default="recast", description="PostgreSQL password")
     db_name: str = Field(default="recastai", description="PostgreSQL database name")
+    db_sslmode: str = Field(default="disable", description="PostgreSQL sslmode")
 
-    # --- LLM Provider ---
-    llm_provider: str = Field(
-        default="anthropic",
-        description="LLM provider: anthropic, gemini, or openai",
-    )
-    anthropic_api_key: str = Field(default="", description="Anthropic API key")
+    # --- Gemini ---
     gemini_api_key: str = Field(default="", description="Google Gemini API key")
-    openai_api_key: str = Field(default="", description="OpenAI API key")
-    llm_model: str = Field(
-        default="",
-        description="Model identifier (auto-selected per provider if empty)",
+    gemini_model: str = Field(
+        default="gemini-2.5-pro",
+        description="Primary Gemini model identifier",
     )
+    gemini_fallback_model: str = Field(
+        default="gemini-2.5-flash",
+        description="Fallback Gemini model for long videos",
+    )
+    gemini_timeout_s: int = Field(
+        default=600,
+        description="Timeout in seconds for Gemini generate_content calls",
+    )
+
+    # --- Temp / working storage ---
+    tmp_dir: str = Field(
+        default="/tmp/video-analyzer",
+        description="Temp directory for downloaded videos (prefer tmpfs)",
+    )
+
+    # --- Health server port ---
+    health_port: int = Field(default=8080, description="FastAPI health-check port")
 
     # --- Logging ---
     log_level: str = Field(default="INFO", description="Log level (DEBUG, INFO, WARNING, ERROR)")
@@ -70,9 +85,6 @@ class Settings(BaseSettings):
             f"amqp://{self.rabbitmq_user}:{self.rabbitmq_password}"
             f"@{self.rabbitmq_host}:{self.rabbitmq_port}/"
         )
-
-    # --- Database ---
-    db_sslmode: str = Field(default="disable", description="PostgreSQL sslmode")
 
     @property
     def dsn(self) -> str:

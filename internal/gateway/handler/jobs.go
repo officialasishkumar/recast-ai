@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"context"
 	"database/sql"
 	"fmt"
 	"net/http"
@@ -18,6 +19,11 @@ import (
 
 // Maximum upload size: 2 GB.
 const maxUploadSize = 2 << 30
+
+// Publisher abstracts the queue publish call so tests can stub it.
+type Publisher interface {
+	Publish(ctx context.Context, queueName string, msg any) error
+}
 
 // ---------- request / response types ----------
 
@@ -100,12 +106,6 @@ func (d *Deps) CreateJob(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Determine priority based on role.
-	priority := 0
-	if claims.Role == models.RolePro || claims.Role == models.RoleAdmin {
-		priority = 1
-	}
-
 	now := time.Now().UTC()
 	job := models.Job{
 		ID:           jobID,
@@ -116,7 +116,7 @@ func (d *Deps) CreateJob(w http.ResponseWriter, r *http.Request) {
 		VoiceID:      voiceID,
 		Style:        style,
 		Language:     language,
-		Priority:     priority,
+		Priority:     0,
 		TraceID:      traceID,
 		CreatedAt:    now,
 		UpdatedAt:    now,
@@ -171,7 +171,7 @@ func (d *Deps) ListJobs(w http.ResponseWriter, r *http.Request) {
 	var jobs []models.Job
 	err := d.DB.SelectContext(r.Context(), &jobs,
 		`SELECT id, user_id, stage, original_file, original_name, duration_ms,
-		        voice_id, style, language, priority, frames_path, audio_path,
+		        voice_id, style, language, priority, audio_path,
 		        output_file, download_url, error_message, trace_id,
 		        created_at, updated_at, completed_at
 		 FROM jobs WHERE user_id = $1 ORDER BY created_at DESC`, claims.UserID)
@@ -207,7 +207,7 @@ func (d *Deps) GetJob(w http.ResponseWriter, r *http.Request) {
 	var job models.Job
 	err := d.DB.GetContext(r.Context(), &job,
 		`SELECT id, user_id, stage, original_file, original_name, duration_ms,
-		        voice_id, style, language, priority, frames_path, audio_path,
+		        voice_id, style, language, priority, audio_path,
 		        output_file, download_url, error_message, trace_id,
 		        created_at, updated_at, completed_at
 		 FROM jobs WHERE id = $1`, jobID)
@@ -247,7 +247,7 @@ func (d *Deps) DeleteJob(w http.ResponseWriter, r *http.Request) {
 
 	var job models.Job
 	err := d.DB.GetContext(r.Context(), &job,
-		`SELECT id, user_id, original_file, frames_path, audio_path, output_file
+		`SELECT id, user_id, original_file, audio_path, output_file
 		 FROM jobs WHERE id = $1`, jobID)
 	if err != nil {
 		if err == sql.ErrNoRows {
@@ -440,7 +440,7 @@ func (d *Deps) UpdateTranscript(w http.ResponseWriter, r *http.Request) {
 		models.StageTranscribed, time.Now().UTC(), jobID)
 	if err != nil {
 		d.Logger.Error("update transcript: update job stage", "error", err)
-		// Non-fatal — continue to publish.
+		// Non-fatal; continue to publish.
 	}
 
 	// Publish re-synthesis message.
@@ -467,9 +467,6 @@ func (d *Deps) UpdateTranscript(w http.ResponseWriter, r *http.Request) {
 // s3KeysForJob collects all S3 keys associated with a job for cleanup.
 func s3KeysForJob(j models.Job) []string {
 	keys := []string{j.OriginalFile}
-	if j.FramesPath.Valid {
-		keys = append(keys, j.FramesPath.String)
-	}
 	if j.AudioPath.Valid {
 		keys = append(keys, j.AudioPath.String)
 	}

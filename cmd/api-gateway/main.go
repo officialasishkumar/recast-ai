@@ -143,10 +143,13 @@ func main() {
 			auth.With(mw.JWTAuth(authCfg)).Get("/me", deps.Me)
 		})
 
+		// ---------- public share routes (no auth) ----------
+		v1.Get("/public/shares/{token}", deps.PublicShare)
+
 		// ---------- authenticated routes ----------
 		v1.Group(func(authed chi.Router) {
 			authed.Use(mw.JWTAuth(authCfg))
-			authed.Use(mw.RateLimiter(rdb, mw.DefaultRoleLimits(), logger))
+			authed.Use(mw.RateLimiter(rdb, mw.DefaultLimit(), logger))
 
 			// Jobs.
 			authed.Post("/jobs", deps.CreateJob)
@@ -157,6 +160,13 @@ func main() {
 			// Transcript.
 			authed.Get("/jobs/{id}/transcript", deps.GetTranscript)
 			authed.Patch("/jobs/{id}/transcript", deps.UpdateTranscript)
+
+			// Segment regeneration.
+			authed.Post("/jobs/{id}/segments/{segmentId}/regenerate", deps.RegenerateSegment)
+
+			// Share links.
+			authed.Post("/jobs/{id}/share", deps.CreateShare)
+			authed.Delete("/jobs/{id}/share", deps.DeleteShare)
 
 			// Export.
 			authed.Get("/jobs/{id}/export", deps.ExportJob)

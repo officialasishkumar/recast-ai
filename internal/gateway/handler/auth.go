@@ -17,7 +17,6 @@ import (
 	"github.com/officialasishkumar/recast-ai/pkg/auth"
 	"github.com/officialasishkumar/recast-ai/pkg/config"
 	"github.com/officialasishkumar/recast-ai/pkg/models"
-	"github.com/officialasishkumar/recast-ai/pkg/queue"
 	"github.com/officialasishkumar/recast-ai/pkg/storage"
 
 	mw "github.com/officialasishkumar/recast-ai/internal/gateway/middleware"
@@ -27,7 +26,7 @@ import (
 type Deps struct {
 	DB      *sqlx.DB
 	Store   *storage.Client
-	Queue   *queue.Connection
+	Queue   Publisher
 	Redis   *redis.Client
 	AuthCfg config.Auth
 	Logger  *slog.Logger
@@ -54,10 +53,37 @@ type googleAuthRequest struct {
 	Code string `json:"code"`
 }
 
+// publicUser is the user payload returned to clients.
+type publicUser struct {
+	ID        string `json:"id"`
+	Email     string `json:"email"`
+	Name      string `json:"name"`
+	Role      string `json:"role"`
+	AvatarURL string `json:"avatar_url,omitempty"`
+	CreatedAt string `json:"created_at"`
+	UpdatedAt string `json:"updated_at"`
+}
+
+func toPublicUser(u models.User) publicUser {
+	avatar := ""
+	if u.AvatarURL.Valid {
+		avatar = u.AvatarURL.String
+	}
+	return publicUser{
+		ID:        u.ID,
+		Email:     u.Email,
+		Name:      u.Name,
+		Role:      u.Role,
+		AvatarURL: avatar,
+		CreatedAt: u.CreatedAt.UTC().Format(time.RFC3339),
+		UpdatedAt: u.UpdatedAt.UTC().Format(time.RFC3339),
+	}
+}
+
 type authResponse struct {
-	Token        string      `json:"token"`
-	RefreshToken string      `json:"refresh_token,omitempty"`
-	User         models.User `json:"user"`
+	Token        string     `json:"token"`
+	RefreshToken string     `json:"refresh_token,omitempty"`
+	User         publicUser `json:"user"`
 }
 
 // ---------- handlers ----------
@@ -107,17 +133,16 @@ func (d *Deps) Register(w http.ResponseWriter, r *http.Request) {
 		Email:        req.Email,
 		PasswordHash: sql.NullString{String: string(hash), Valid: true},
 		Name:         req.Name,
-		Role:         models.RoleFree,
-		MinutesQuota: 30, // default free-tier quota
+		Role:         models.RoleUser,
 		CreatedAt:    time.Now().UTC(),
 		UpdatedAt:    time.Now().UTC(),
 	}
 
 	_, err = d.DB.ExecContext(r.Context(),
-		`INSERT INTO users (id, email, password_hash, name, role, minutes_used, minutes_quota, created_at, updated_at)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+		`INSERT INTO users (id, email, password_hash, name, role, created_at, updated_at)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7)`,
 		user.ID, user.Email, user.PasswordHash, user.Name, user.Role,
-		user.MinutesUsed, user.MinutesQuota, user.CreatedAt, user.UpdatedAt)
+		user.CreatedAt, user.UpdatedAt)
 	if err != nil {
 		d.Logger.Error("register: insert user", "error", err)
 		writeErr(w, http.StatusInternalServerError, "internal server error")
@@ -141,7 +166,7 @@ func (d *Deps) Register(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusCreated, authResponse{
 		Token:        token,
 		RefreshToken: refresh,
-		User:         user,
+		User:         toPublicUser(user),
 	})
 }
 
@@ -163,7 +188,7 @@ func (d *Deps) Login(w http.ResponseWriter, r *http.Request) {
 
 	var user models.User
 	err := d.DB.GetContext(r.Context(), &user,
-		`SELECT id, email, password_hash, name, role, minutes_used, minutes_quota, created_at, updated_at
+		`SELECT id, email, password_hash, name, role, avatar_url, created_at, updated_at
 		 FROM users WHERE email = $1`, req.Email)
 	if err != nil {
 		if err == sql.ErrNoRows {
@@ -202,7 +227,7 @@ func (d *Deps) Login(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, authResponse{
 		Token:        token,
 		RefreshToken: refresh,
-		User:         user,
+		User:         toPublicUser(user),
 	})
 }
 
@@ -229,7 +254,7 @@ func (d *Deps) Refresh(w http.ResponseWriter, r *http.Request) {
 
 	var user models.User
 	err = d.DB.GetContext(r.Context(), &user,
-		`SELECT id, email, password_hash, name, role, minutes_used, minutes_quota, created_at, updated_at
+		`SELECT id, email, password_hash, name, role, avatar_url, created_at, updated_at
 		 FROM users WHERE id = $1`, userID)
 	if err != nil {
 		if err == sql.ErrNoRows {
@@ -258,7 +283,7 @@ func (d *Deps) Refresh(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, authResponse{
 		Token:        token,
 		RefreshToken: newRefresh,
-		User:         user,
+		User:         toPublicUser(user),
 	})
 }
 
@@ -290,14 +315,14 @@ func (d *Deps) GoogleAuth(w http.ResponseWriter, r *http.Request) {
 	var user models.User
 	err = d.DB.GetContext(r.Context(), &user,
 		`SELECT id, email, password_hash, name, role, oauth_provider, oauth_id, avatar_url,
-		        minutes_used, minutes_quota, created_at, updated_at
+		        created_at, updated_at
 		 FROM users WHERE oauth_provider = 'google' AND oauth_id = $1`, gUser.ID)
 
 	if err == sql.ErrNoRows {
 		// Check if the email is already taken by a password-based account.
 		err = d.DB.GetContext(r.Context(), &user,
 			`SELECT id, email, password_hash, name, role, oauth_provider, oauth_id, avatar_url,
-			        minutes_used, minutes_quota, created_at, updated_at
+			        created_at, updated_at
 			 FROM users WHERE email = $1`, gUser.Email)
 		if err == nil {
 			// Link the existing account to Google.
@@ -315,19 +340,18 @@ func (d *Deps) GoogleAuth(w http.ResponseWriter, r *http.Request) {
 				ID:            uuid.New().String(),
 				Email:         gUser.Email,
 				Name:          gUser.Name,
-				Role:          models.RoleFree,
+				Role:          models.RoleUser,
 				OAuthProvider: sql.NullString{String: "google", Valid: true},
 				OAuthID:       sql.NullString{String: gUser.ID, Valid: true},
 				AvatarURL:     sql.NullString{String: gUser.AvatarURL, Valid: gUser.AvatarURL != ""},
-				MinutesQuota:  30,
 				CreatedAt:     time.Now().UTC(),
 				UpdatedAt:     time.Now().UTC(),
 			}
 			_, insertErr := d.DB.ExecContext(r.Context(),
-				`INSERT INTO users (id, email, name, role, oauth_provider, oauth_id, avatar_url, minutes_used, minutes_quota, created_at, updated_at)
-				 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
+				`INSERT INTO users (id, email, name, role, oauth_provider, oauth_id, avatar_url, created_at, updated_at)
+				 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
 				user.ID, user.Email, user.Name, user.Role, user.OAuthProvider, user.OAuthID,
-				user.AvatarURL, user.MinutesUsed, user.MinutesQuota, user.CreatedAt, user.UpdatedAt)
+				user.AvatarURL, user.CreatedAt, user.UpdatedAt)
 			if insertErr != nil {
 				d.Logger.Error("google auth: insert user", "error", insertErr)
 				writeErr(w, http.StatusInternalServerError, "internal server error")
@@ -361,7 +385,7 @@ func (d *Deps) GoogleAuth(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, authResponse{
 		Token:        token,
 		RefreshToken: refresh,
-		User:         user,
+		User:         toPublicUser(user),
 	})
 }
 
@@ -377,7 +401,7 @@ func (d *Deps) Me(w http.ResponseWriter, r *http.Request) {
 
 	var user models.User
 	err := d.DB.GetContext(r.Context(), &user,
-		`SELECT id, email, name, role, avatar_url, minutes_used, minutes_quota, created_at, updated_at
+		`SELECT id, email, name, role, avatar_url, created_at, updated_at
 		 FROM users WHERE id = $1`, claims.UserID)
 	if err != nil {
 		if err == sql.ErrNoRows {
@@ -389,7 +413,7 @@ func (d *Deps) Me(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	writeJSON(w, http.StatusOK, user)
+	writeJSON(w, http.StatusOK, toPublicUser(user))
 }
 
 // ---------- internal helpers ----------

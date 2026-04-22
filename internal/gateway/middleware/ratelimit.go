@@ -5,48 +5,41 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"os"
 	"strconv"
 	"time"
 
 	"github.com/redis/go-redis/v9"
 )
 
-// RoleLimits maps a user role to the maximum number of requests allowed per
-// window (1 minute). Roles not present in the map inherit the "free" limit.
-type RoleLimits map[string]int
-
-// DefaultRoleLimits returns the standard rate-limit configuration.
-func DefaultRoleLimits() RoleLimits {
-	return RoleLimits{
-		"free":  60,
-		"guest": 60,
-		"pro":   600,
-		"admin": 600,
+// DefaultLimit returns the per-minute request limit used by the gateway. It
+// reads the RATE_LIMIT_PER_MIN env var and falls back to 60.
+func DefaultLimit() int {
+	if v := os.Getenv("RATE_LIMIT_PER_MIN"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			return n
+		}
 	}
+	return 60
 }
 
-// RateLimiter returns middleware that enforces a per-user token-bucket style
-// rate limit backed by Redis. Each user key is an INCR counter with a 1-minute
-// TTL (sliding window approximation). Unauthenticated requests are keyed by
-// remote IP and receive the "free" limit.
-func RateLimiter(rdb *redis.Client, limits RoleLimits, logger *slog.Logger) func(http.Handler) http.Handler {
+// RateLimiter returns middleware that enforces a single global per-user
+// token-bucket rate limit backed by Redis. Each key is an INCR counter with a
+// one-minute TTL (sliding-window approximation). Unauthenticated requests are
+// keyed by remote IP.
+func RateLimiter(rdb *redis.Client, limit int, logger *slog.Logger) func(http.Handler) http.Handler {
+	if limit <= 0 {
+		limit = 60
+	}
 	window := 60 * time.Second
 
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			var identity string
-			role := "free"
-
 			if claims := ClaimsFromContext(r.Context()); claims != nil {
 				identity = claims.UserID
-				role = claims.Role
 			} else {
 				identity = r.RemoteAddr
-			}
-
-			limit, ok := limits[role]
-			if !ok {
-				limit = limits["free"]
 			}
 
 			key := fmt.Sprintf("ratelimit:%s", identity)
@@ -60,14 +53,12 @@ func RateLimiter(rdb *redis.Client, limits RoleLimits, logger *slog.Logger) func
 				return
 			}
 
-			// Set the TTL only on the first increment (count == 1).
 			if count == 1 {
 				if err := rdb.Expire(ctx, key, window).Err(); err != nil {
 					logger.Error("rate limiter redis EXPIRE failed", "error", err)
 				}
 			}
 
-			// Write informational rate-limit headers.
 			w.Header().Set("X-RateLimit-Limit", strconv.Itoa(limit))
 			remaining := limit - int(count)
 			if remaining < 0 {

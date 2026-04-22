@@ -10,9 +10,11 @@ import (
 
 // Base holds configuration common to all services.
 type Base struct {
-	ServiceName string
-	Environment string // development, staging, production
-	LogLevel    string
+	ServiceName     string
+	Environment     string // development, staging, production
+	LogLevel        string
+	RateLimitPerMin int
+	OTELEndpoint    string
 }
 
 // Database holds PostgreSQL connection settings.
@@ -26,6 +28,7 @@ type Database struct {
 	MaxConns int
 }
 
+// DSN returns a libpq-compatible connection string.
 func (d Database) DSN() string {
 	return fmt.Sprintf(
 		"host=%s port=%d user=%s password=%s dbname=%s sslmode=%s",
@@ -42,6 +45,7 @@ type Redis struct {
 	UseTLS   bool
 }
 
+// Addr returns the host:port pair for the Redis client.
 func (r Redis) Addr() string {
 	return fmt.Sprintf("%s:%d", r.Host, r.Port)
 }
@@ -64,6 +68,7 @@ type RabbitMQ struct {
 	RawURL   string // full AMQP(S) URL — if set, overrides individual fields
 }
 
+// URL returns the AMQP connection string.
 func (r RabbitMQ) URL() string {
 	if r.RawURL != "" {
 		return r.RawURL
@@ -83,13 +88,20 @@ type Storage struct {
 
 // Auth holds JWT and OAuth settings.
 type Auth struct {
-	JWTSecret        string
-	JWTExpiry        time.Duration
-	RefreshExpiry    time.Duration
-	GoogleClientID   string
-	GoogleSecret     string
-	GitHubClientID   string
-	GitHubSecret     string
+	JWTSecret      string
+	JWTExpiry      time.Duration
+	RefreshExpiry  time.Duration
+	GoogleClientID string
+	GoogleSecret   string
+	GitHubClientID string
+	GitHubSecret   string
+}
+
+// Gemini holds Google Gemini API settings used by Go callers (if any).
+type Gemini struct {
+	APIKey        string
+	Model         string
+	FallbackModel string
 }
 
 // Env reads an environment variable with a default fallback.
@@ -136,9 +148,11 @@ func EnvDuration(key string, fallback time.Duration) time.Duration {
 // LoadBase loads the common configuration from environment variables.
 func LoadBase(serviceName string) Base {
 	return Base{
-		ServiceName: serviceName,
-		Environment: Env("ENVIRONMENT", "development"),
-		LogLevel:    Env("LOG_LEVEL", "info"),
+		ServiceName:     serviceName,
+		Environment:     Env("ENVIRONMENT", "development"),
+		LogLevel:        Env("LOG_LEVEL", "info"),
+		RateLimitPerMin: EnvInt("RATE_LIMIT_PER_MIN", 60),
+		OTELEndpoint:    Env("OTEL_EXPORTER_OTLP_ENDPOINT", ""),
 	}
 }
 
@@ -200,5 +214,14 @@ func LoadAuth() Auth {
 		GoogleSecret:   Env("GOOGLE_CLIENT_SECRET", ""),
 		GitHubClientID: Env("GITHUB_CLIENT_ID", ""),
 		GitHubSecret:   Env("GITHUB_CLIENT_SECRET", ""),
+	}
+}
+
+// LoadGemini loads Google Gemini config from environment variables.
+func LoadGemini() Gemini {
+	return Gemini{
+		APIKey:        Env("GEMINI_API_KEY", ""),
+		Model:         Env("GEMINI_MODEL", "gemini-2.5-pro"),
+		FallbackModel: Env("GEMINI_FALLBACK_MODEL", "gemini-2.5-flash"),
 	}
 }

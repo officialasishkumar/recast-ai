@@ -1,19 +1,23 @@
-"""LLM Orchestrator service entry point.
+"""Video Analyzer service entry point.
 
-Consumes frame extraction results from ``frames.queue``, sends video
-frames to Claude for multimodal narration generation, validates the
-output, persists transcript segments to PostgreSQL, and publishes
-the result to ``transcript.queue``.
+Consumes ingestion jobs from ``ingestion.queue``, downloads the raw
+video from MinIO, uploads it to the Gemini File API, generates a
+timestamped narration transcript, persists segments to PostgreSQL,
+and publishes the next stage message to ``transcript.queue``.
 
-A lightweight FastAPI health-check server runs in a background thread so
-that Kubernetes liveness probes work independently of queue consumption.
+A lightweight FastAPI health-check server runs in a background thread
+so Kubernetes liveness probes work independently of queue consumption.
 """
 
 from __future__ import annotations
 
 import asyncio
 import json
+import os
+import pathlib
 import signal
+import subprocess
+import tempfile
 import threading
 import time
 import uuid
@@ -21,6 +25,7 @@ from contextlib import suppress
 from typing import Any
 
 import pika
+import pika.adapters.blocking_connection
 import pika.exceptions
 import psycopg2  # type: ignore[import-untyped]
 import psycopg2.extras  # type: ignore[import-untyped]
@@ -30,8 +35,8 @@ import uvicorn
 from fastapi import FastAPI
 from minio import Minio
 
+from analyzer.gemini import GeminiVideoAnalyzer
 from config import settings
-from orchestrator.llm import LLMClient
 
 # --------------------------------------------------------------------------- #
 # Logging
@@ -54,13 +59,13 @@ structlog.configure(
     cache_logger_on_first_use=True,
 )
 
-logger = structlog.get_logger("llm_orchestrator")
+logger = structlog.get_logger("video_analyzer")
 
 # --------------------------------------------------------------------------- #
 # Queue names
 # --------------------------------------------------------------------------- #
 
-FRAMES_QUEUE = "frames.queue"
+INGESTION_QUEUE = "ingestion.queue"
 TRANSCRIPT_QUEUE = "transcript.queue"
 
 # --------------------------------------------------------------------------- #
@@ -79,7 +84,12 @@ async def health() -> dict[str, str]:
 
 
 def _run_health_server() -> None:
-    uvicorn.run(health_app, host="0.0.0.0", port=8080, log_level="warning")
+    uvicorn.run(
+        health_app,
+        host="0.0.0.0",
+        port=settings.health_port,
+        log_level="warning",
+    )
 
 
 # --------------------------------------------------------------------------- #
@@ -114,9 +124,11 @@ def _connect_rabbitmq() -> pika.BlockingConnection:
     raise RuntimeError("failed to connect to RabbitMQ after 30 attempts")
 
 
-def _declare_queues(channel: pika.adapters.blocking_connection.BlockingChannel) -> None:
+def _declare_queues(
+    channel: pika.adapters.blocking_connection.BlockingChannel,
+) -> None:
     """Declare the queues this service interacts with (with DLQs)."""
-    for queue_name in (FRAMES_QUEUE, TRANSCRIPT_QUEUE):
+    for queue_name in (INGESTION_QUEUE, TRANSCRIPT_QUEUE):
         dlq = f"{queue_name}.dlq"
         channel.queue_declare(queue=dlq, durable=True)
         channel.queue_declare(
@@ -133,8 +145,13 @@ def _declare_queues(channel: pika.adapters.blocking_connection.BlockingChannel) 
 
 def _connect_minio() -> Minio:
     secure = settings.s3_endpoint.startswith("https")
+    endpoint = settings.s3_endpoint
+    if endpoint.startswith("http://"):
+        endpoint = endpoint[len("http://"):]
+    elif endpoint.startswith("https://"):
+        endpoint = endpoint[len("https://"):]
     return Minio(
-        settings.s3_endpoint,
+        endpoint,
         access_key=settings.s3_access_key,
         secret_key=settings.s3_secret_key,
         secure=secure,
@@ -150,6 +167,7 @@ def _connect_postgres() -> psycopg2.extensions.connection:
                 user=settings.db_user,
                 password=settings.db_password,
                 dbname=settings.db_name,
+                sslmode=settings.db_sslmode,
             )
             conn.autocommit = False
             logger.info("postgres_connected", attempt=attempt)
@@ -169,52 +187,77 @@ def _connect_redis() -> redis.Redis:
 
 
 # --------------------------------------------------------------------------- #
-# MinIO download helpers
+# Video download + duration probe
 # --------------------------------------------------------------------------- #
 
 
-def _download_frames(minio_client: Minio, job_id: str) -> list[bytes]:
-    """Download all JPEG frames for a job from MinIO."""
-    prefix = f"frames/{job_id}/"
-    frames: list[bytes] = []
-
-    objects = list(minio_client.list_objects(
-        settings.s3_bucket, prefix=prefix, recursive=True
-    ))
-    # Sort by object name to maintain frame ordering
-    objects.sort(key=lambda o: o.object_name)
-
-    for obj in objects:
-        if not obj.object_name.lower().endswith(".jpg"):
-            continue
-        response = minio_client.get_object(settings.s3_bucket, obj.object_name)
-        try:
-            data = response.read()
-            frames.append(data)
-        finally:
-            response.close()
-            response.release_conn()
-
-    logger.info("frames_downloaded", job_id=job_id, count=len(frames))
-    return frames
+def _download_video(
+    minio_client: Minio,
+    object_key: str,
+    local_dir: str,
+) -> str:
+    """Download a video object from MinIO to ``local_dir`` and return its path."""
+    os.makedirs(local_dir, exist_ok=True)
+    suffix = pathlib.Path(object_key).suffix or ".mp4"
+    fd, local_path = tempfile.mkstemp(suffix=suffix, dir=local_dir)
+    os.close(fd)
+    minio_client.fget_object(settings.s3_bucket, object_key, local_path)
+    size_bytes = os.path.getsize(local_path)
+    logger.info(
+        "video_downloaded",
+        object_key=object_key,
+        local_path=local_path,
+        size_bytes=size_bytes,
+    )
+    return local_path
 
 
-def _download_audio_text(
-    minio_client: Minio, audio_file: str
-) -> str | None:
-    """Download extracted audio text from MinIO, or return None."""
-    if not audio_file:
-        return None
+def _probe_duration_ms(video_path: str) -> int:
+    """Probe the video file's duration in ms via ``ffprobe``.
+
+    Returns 0 when the duration cannot be determined (treated as unknown
+    by downstream code and propagated as ``None`` to the prompt).
+    Raises RuntimeError when ffprobe is not installed on the system.
+    """
     try:
-        response = minio_client.get_object(settings.s3_bucket, audio_file)
-        try:
-            return response.read().decode("utf-8", errors="replace")
-        finally:
-            response.close()
-            response.release_conn()
-    except Exception:
-        logger.warning("audio_download_failed", audio_file=audio_file, exc_info=True)
-        return None
+        completed = subprocess.run(
+            [
+                "ffprobe",
+                "-v", "error",
+                "-show_entries", "format=duration",
+                "-of", "default=noprint_wrappers=1:nokey=1",
+                video_path,
+            ],
+            check=True,
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+    except FileNotFoundError as exc:
+        raise RuntimeError(
+            "ffprobe binary not found on PATH; install ffmpeg in the container"
+        ) from exc
+    except subprocess.CalledProcessError as exc:
+        logger.warning(
+            "ffprobe_nonzero_exit",
+            stderr=exc.stderr,
+            returncode=exc.returncode,
+        )
+        return 0
+    except subprocess.TimeoutExpired:
+        logger.warning("ffprobe_timeout")
+        return 0
+
+    raw = completed.stdout.strip()
+    if not raw or raw.lower() == "n/a":
+        return 0
+    try:
+        seconds = float(raw)
+    except ValueError:
+        return 0
+    if seconds <= 0:
+        return 0
+    return int(seconds * 1000)
 
 
 # --------------------------------------------------------------------------- #
@@ -230,7 +273,7 @@ def _store_segments(
     """Upsert transcript segments into PostgreSQL."""
     with pg_conn.cursor() as cur:
         for seg in segments:
-            words_json = json.dumps(seg["words"])
+            words_json = json.dumps(seg.get("words", []))
             cur.execute(
                 """
                 INSERT INTO transcript_segments
@@ -264,30 +307,47 @@ def _update_job_stage(
     pg_conn: psycopg2.extensions.connection,
     job_id: str,
     stage: str,
+    duration_ms: int,
 ) -> None:
-    """Update the job stage in PostgreSQL."""
+    """Update the job stage and duration (only if not already set)."""
     with pg_conn.cursor() as cur:
-        cur.execute(
-            "UPDATE jobs SET stage = %s, updated_at = NOW() WHERE id = %s",
-            (stage, job_id),
-        )
+        if duration_ms > 0:
+            cur.execute(
+                """
+                UPDATE jobs
+                SET stage = %s,
+                    duration_ms = CASE
+                        WHEN duration_ms IS NULL OR duration_ms = 0 THEN %s
+                        ELSE duration_ms
+                    END,
+                    updated_at = NOW()
+                WHERE id = %s
+                """,
+                (stage, duration_ms, job_id),
+            )
+        else:
+            cur.execute(
+                "UPDATE jobs SET stage = %s, updated_at = NOW() WHERE id = %s",
+                (stage, job_id),
+            )
     pg_conn.commit()
 
 
-def _get_job_metadata(
+def _get_existing_duration_ms(
     pg_conn: psycopg2.extensions.connection,
     job_id: str,
-) -> dict[str, Any]:
-    """Fetch job metadata needed for prompt construction."""
+) -> int:
+    """Return the current duration_ms stored for this job, or 0 if unset."""
     with pg_conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
         cur.execute(
-            "SELECT voice_id, style, language, duration_ms FROM jobs WHERE id = %s",
+            "SELECT duration_ms FROM jobs WHERE id = %s",
             (job_id,),
         )
         row = cur.fetchone()
-        if row is None:
-            raise ValueError(f"job {job_id} not found in database")
-        return dict(row)
+        if not row:
+            return 0
+        value = row.get("duration_ms") or 0
+        return int(value)
 
 
 # --------------------------------------------------------------------------- #
@@ -297,93 +357,106 @@ def _get_job_metadata(
 
 def _process_message(
     body: bytes,
-    llm_client: LLMClient,
+    analyzer: GeminiVideoAnalyzer,
     minio_client: Minio,
     pg_conn: psycopg2.extensions.connection,
     redis_client: redis.Redis,
     channel: pika.adapters.blocking_connection.BlockingChannel,
 ) -> None:
-    """Process a single message from frames.queue."""
+    """Process a single message from ``ingestion.queue``."""
     msg = json.loads(body)
     job_id: str = msg["job_id"]
     trace_id: str = msg.get("trace_id", "")
-    payload: dict = msg.get("payload", {})
+    payload: dict[str, Any] = msg.get("payload", {})
 
     structlog.contextvars.bind_contextvars(job_id=job_id, trace_id=trace_id)
-    logger.info("processing_message", queue=FRAMES_QUEUE)
-
-    # 1. Parse payload
-    audio_file: str = payload.get("audio_file", "")
-    duration_ms: int = payload.get("duration_ms", 0)
-
-    # 2. Download frames from MinIO
-    frames = _download_frames(minio_client, job_id)
-    if not frames:
-        raise ValueError(f"no frames found for job {job_id}")
-
-    # 3. Download extracted audio text if available
-    audio_text = _download_audio_text(minio_client, audio_file)
-
-    # 4. Get job metadata for prompt construction
-    job_meta = _get_job_metadata(pg_conn, job_id)
-    style: str = job_meta.get("style", "formal")
-    language: str = job_meta.get("language", "en")
-    if duration_ms == 0:
-        duration_ms = int(job_meta.get("duration_ms", 0))
-
-    # 5-7. Call Claude API with multimodal input, parse and validate
-    loop = asyncio.new_event_loop()
     try:
-        segments = loop.run_until_complete(
-            llm_client.generate_transcript(
-                frames=frames,
-                audio_text=audio_text,
-                style=style,
-                language=language,
-                duration_ms=duration_ms,
+        logger.info("processing_message", queue=INGESTION_QUEUE)
+
+        object_key: str = payload["object_key"]
+        voice_id: str = payload.get("voice_id", "default")
+        style: str = payload.get("style", "formal")
+        language: str = payload.get("language", "en")
+
+        local_video_path: str | None = None
+        try:
+            local_video_path = _download_video(
+                minio_client,
+                object_key,
+                settings.tmp_dir,
             )
+
+            probed_duration_ms = _probe_duration_ms(local_video_path)
+            existing_duration_ms = _get_existing_duration_ms(pg_conn, job_id)
+            effective_duration_ms = (
+                probed_duration_ms if probed_duration_ms > 0 else existing_duration_ms
+            )
+            prompt_duration_ms: int | None = (
+                effective_duration_ms if effective_duration_ms > 0 else None
+            )
+
+            logger.info(
+                "duration_probed",
+                probed_ms=probed_duration_ms,
+                existing_ms=existing_duration_ms,
+                effective_ms=effective_duration_ms,
+            )
+
+            segments = asyncio.run(
+                analyzer.analyze(
+                    video_path=local_video_path,
+                    style=style,
+                    language=language,
+                    duration_ms=prompt_duration_ms,
+                )
+            )
+        finally:
+            if local_video_path and os.path.exists(local_video_path):
+                with suppress(OSError):
+                    os.remove(local_video_path)
+
+        _store_segments(pg_conn, job_id, segments)
+        _update_job_stage(
+            pg_conn,
+            job_id,
+            "transcribed",
+            probed_duration_ms,
         )
+
+        transcript_payload = {
+            "job_id": job_id,
+            "trace_id": trace_id,
+            "stage_attempt_id": str(uuid.uuid4()),
+            "payload": {
+                "segments": segments,
+                "voice_id": voice_id,
+                "duration_ms": effective_duration_ms,
+            },
+        }
+        channel.basic_publish(
+            exchange="",
+            routing_key=TRANSCRIPT_QUEUE,
+            body=json.dumps(transcript_payload),
+            properties=pika.BasicProperties(
+                delivery_mode=2,
+                content_type="application/json",
+            ),
+        )
+        logger.info(
+            "published_to_transcript_queue",
+            segment_count=len(segments),
+        )
+
+        event = {
+            "event": "stage_complete",
+            "job_id": job_id,
+            "stage": "transcribed",
+            "progress": 0.50,
+        }
+        with suppress(Exception):
+            redis_client.publish(f"job:{job_id}", json.dumps(event))
     finally:
-        loop.close()
-
-    # 8. Store segments in PostgreSQL
-    _store_segments(pg_conn, job_id, segments)
-
-    # 9. Update job stage
-    _update_job_stage(pg_conn, job_id, "transcribed")
-
-    # 10. Publish to transcript.queue
-    voice_id: str = job_meta.get("voice_id", "default")
-    transcript_payload = {
-        "job_id": job_id,
-        "trace_id": trace_id,
-        "stage_attempt_id": str(uuid.uuid4()),
-        "payload": {
-            "segments": segments,
-            "voice_id": voice_id,
-        },
-    }
-    channel.basic_publish(
-        exchange="",
-        routing_key=TRANSCRIPT_QUEUE,
-        body=json.dumps(transcript_payload),
-        properties=pika.BasicProperties(
-            delivery_mode=2,  # persistent
-            content_type="application/json",
-        ),
-    )
-    logger.info("published_to_transcript_queue", segment_count=len(segments))
-
-    # 11. Publish job event to Redis pub/sub
-    event = {
-        "event": "stage_complete",
-        "job_id": job_id,
-        "stage": "transcribed",
-        "progress": 0.40,
-    }
-    redis_client.publish(f"job:{job_id}", json.dumps(event))
-
-    structlog.contextvars.unbind_contextvars("job_id", "trace_id")
+        structlog.contextvars.unbind_contextvars("job_id", "trace_id")
 
 
 # --------------------------------------------------------------------------- #
@@ -395,15 +468,12 @@ def _run_consumer() -> None:
     """Main consumer loop with reconnection support."""
     global _healthy
 
-    # Resolve provider + API key
-    provider = settings.llm_provider
-    if provider == "gemini":
-        api_key = settings.gemini_api_key
-    elif provider == "openai":
-        api_key = settings.openai_api_key
-    else:
-        api_key = settings.anthropic_api_key
-    llm_client = LLMClient(provider=provider, api_key=api_key, model=settings.llm_model)
+    analyzer = GeminiVideoAnalyzer(
+        api_key=settings.gemini_api_key,
+        model=settings.gemini_model,
+        fallback_model=settings.gemini_fallback_model,
+        timeout_s=settings.gemini_timeout_s,
+    )
     minio_client = _connect_minio()
     pg_conn = _connect_postgres()
     redis_client = _connect_redis()
@@ -416,32 +486,41 @@ def _run_consumer() -> None:
             channel.basic_qos(prefetch_count=1)
             _declare_queues(channel)
 
-            logger.info("consumer_started", queue=FRAMES_QUEUE)
+            logger.info("consumer_started", queue=INGESTION_QUEUE)
 
-            for method, properties, body in channel.consume(
-                FRAMES_QUEUE, inactivity_timeout=30
+            for method, _properties, body in channel.consume(
+                INGESTION_QUEUE, inactivity_timeout=30
             ):
                 if not _healthy:
                     break
-
                 if method is None:
-                    # Inactivity timeout -- heartbeat / check shutdown flag
                     continue
 
                 try:
                     _process_message(
-                        body, llm_client, minio_client, pg_conn, redis_client, channel
+                        body,
+                        analyzer,
+                        minio_client,
+                        pg_conn,
+                        redis_client,
+                        channel,
                     )
                     channel.basic_ack(delivery_tag=method.delivery_tag)
-                    logger.info("message_acked", delivery_tag=method.delivery_tag)
+                    logger.info(
+                        "message_acked",
+                        delivery_tag=method.delivery_tag,
+                    )
                 except Exception:
                     logger.error(
                         "message_processing_failed",
                         delivery_tag=method.delivery_tag,
                         exc_info=True,
                     )
+                    with suppress(Exception):
+                        pg_conn.rollback()
                     channel.basic_nack(
-                        delivery_tag=method.delivery_tag, requeue=False
+                        delivery_tag=method.delivery_tag,
+                        requeue=False,
                     )
 
         except pika.exceptions.AMQPConnectionError:
@@ -455,7 +534,6 @@ def _run_consumer() -> None:
                 with suppress(Exception):
                     rmq_conn.close()
 
-    # Cleanup
     with suppress(Exception):
         pg_conn.close()
     with suppress(Exception):
@@ -480,12 +558,10 @@ def main() -> None:
     signal.signal(signal.SIGINT, _signal_handler)
     signal.signal(signal.SIGTERM, _signal_handler)
 
-    # Start the health-check server in a daemon thread
     health_thread = threading.Thread(target=_run_health_server, daemon=True)
     health_thread.start()
-    logger.info("health_server_started", port=8080)
+    logger.info("health_server_started", port=settings.health_port)
 
-    # Run the consumer on the main thread
     _run_consumer()
 
 
