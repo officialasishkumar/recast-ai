@@ -1,4 +1,4 @@
-.PHONY: help dev up down build test lint migrate clean
+.PHONY: help dev up down build test lint migrate clean test-e2e seed-demo
 
 SHELL := /bin/bash
 
@@ -10,7 +10,7 @@ help: ## Show this help
 # --- Development ---
 
 dev: ## Start infrastructure only (for local development)
-	docker compose up -d postgres redis rabbitmq minio
+	./scripts/dev.sh
 
 up: ## Start all services
 	docker compose up -d --build
@@ -27,7 +27,6 @@ build-go: ## Build all Go binaries
 	@echo "Building Go services..."
 	go build -o bin/api-gateway ./cmd/api-gateway
 	go build -o bin/upload-service ./cmd/upload-service
-	go build -o bin/frame-extractor ./cmd/frame-extractor
 	go build -o bin/mux-service ./cmd/mux-service
 	go build -o bin/delivery-service ./cmd/delivery-service
 	@echo "Done."
@@ -43,10 +42,16 @@ test-go: ## Run Go tests
 	go test -race -coverprofile=coverage.txt -covermode=atomic ./...
 
 test-python: ## Run Python tests
-	cd services/llm-orchestrator && python -m pytest tests/ -v
+	cd services/video-analyzer && python -m pytest tests/ -v
 	cd services/tts-service && python -m pytest tests/ -v
 
 test: test-go test-python ## Run all tests
+
+test-e2e: ## Run end-to-end regression harness
+	./scripts/e2e-run.sh
+
+seed-demo: ## Seed demo data (user, voices, sample job)
+	./scripts/seed-demo.sh
 
 # --- Linting ---
 

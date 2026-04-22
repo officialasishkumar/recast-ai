@@ -1,57 +1,39 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-echo "=== Recast AI — Development Setup ==="
-echo ""
+# Lean one-shot setup: copies .env if missing, pulls images, brings up the stack.
 
-# Check prerequisites
-for cmd in docker go node npm; do
-    if ! command -v "$cmd" &>/dev/null; then
-        echo "ERROR: $cmd is not installed."
-        exit 1
-    fi
-done
-echo "✓ All prerequisites found."
+cd "$(dirname "$0")/.."
 
-# Copy .env if needed
+echo "=== Recast AI - Setup ==="
+
 if [ ! -f .env ]; then
     cp .env.example .env
-    echo "✓ Created .env from .env.example — edit it with your API keys."
+    echo "Created .env from .env.example - edit it to add API keys (GEMINI_API_KEY, etc)."
 else
-    echo "✓ .env already exists."
+    echo ".env already exists; leaving it in place."
 fi
 
-# Install Go dependencies
-echo "Installing Go dependencies..."
-go mod download
-echo "✓ Go dependencies installed."
+echo "Pulling base images (this may take a while)..."
+docker compose pull || true
 
-# Install frontend dependencies
-echo "Installing frontend dependencies..."
-cd web && npm ci && cd ..
-echo "✓ Frontend dependencies installed."
+echo "Building and starting the full stack via make up..."
+make up
 
-# Start infrastructure
-echo "Starting infrastructure (Postgres, Redis, RabbitMQ, MinIO)..."
-docker compose up -d postgres redis rabbitmq minio
-echo "✓ Infrastructure started."
+cat <<'EONEXT'
 
-# Wait for services
-echo "Waiting for services to be healthy..."
-sleep 5
+=== Setup complete ===
 
-echo ""
-echo "=== Setup Complete ==="
-echo ""
-echo "Available commands:"
-echo "  make dev          — Start infrastructure only"
-echo "  make up           — Start all services (Docker)"
-echo "  make build-go     — Build Go binaries locally"
-echo "  make test         — Run all tests"
-echo "  make logs         — Tail service logs"
-echo ""
-echo "Service URLs:"
-echo "  Web UI:           http://localhost:3000"
-echo "  API Gateway:      http://localhost:8080"
-echo "  RabbitMQ Console: http://localhost:15672 (guest/guest)"
-echo "  MinIO Console:    http://localhost:9001 (minioadmin/minioadmin)"
+Next steps:
+  make logs              Tail logs across all services
+  make dev               Start only infra for local dev (app runs on host)
+  make test-e2e          Run the end-to-end regression harness
+  make seed-demo         Seed demo user/voices/sample job
+  make down              Stop everything
+
+Service URLs:
+  Web UI         http://localhost:3000
+  API Gateway    http://localhost:8080
+  RabbitMQ UI    http://localhost:15672  (guest/guest)
+  MinIO Console  http://localhost:9001   (minioadmin/minioadmin)
+EONEXT

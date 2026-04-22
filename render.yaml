@@ -15,20 +15,21 @@ services:
         generateValue: true
       - key: ENVIRONMENT
         value: production
+      - key: GOOGLE_CLIENT_ID
+        sync: false
+      - key: GOOGLE_CLIENT_SECRET
+        sync: false
+      - key: GITHUB_CLIENT_ID
+        sync: false
+      - key: GITHUB_CLIENT_SECRET
+        sync: false
+      - key: RATE_LIMIT_PER_MIN
+        value: "60"
 
   - type: web
     name: recast-upload
     runtime: docker
     dockerfilePath: ./docker/upload-service.Dockerfile
-    dockerContext: .
-    plan: free
-    envVars:
-      - fromGroup: recast-shared
-
-  - type: web
-    name: recast-frame-extractor
-    runtime: docker
-    dockerfilePath: ./docker/frame-extractor.Dockerfile
     dockerContext: .
     plan: free
     envVars:
@@ -55,23 +56,19 @@ services:
   # --- Python Services ---
 
   - type: web
-    name: recast-llm-orchestrator
+    name: recast-video-analyzer
     runtime: docker
-    dockerfilePath: ./docker/llm-orchestrator.Dockerfile
+    dockerfilePath: ./docker/video-analyzer.Dockerfile
     dockerContext: .
     plan: free
     envVars:
       - fromGroup: recast-shared
-      - key: LLM_PROVIDER
-        sync: false
-      - key: ANTHROPIC_API_KEY
-        sync: false
       - key: GEMINI_API_KEY
         sync: false
-      - key: OPENAI_API_KEY
-        sync: false
-      - key: LLM_MODEL
-        sync: false
+      - key: GEMINI_MODEL
+        value: gemini-2.5-pro
+      - key: GEMINI_FALLBACK_MODEL
+        value: gemini-2.5-flash
 
   - type: web
     name: recast-tts
@@ -85,6 +82,12 @@ services:
         sync: false
       - key: TTS_PROVIDER
         value: gtts
+      - key: AWS_ACCESS_KEY_ID
+        sync: false
+      - key: AWS_SECRET_ACCESS_KEY
+        sync: false
+      - key: AWS_REGION
+        value: us-east-1
 
 envVarGroups:
   - name: recast-shared
@@ -133,3 +136,7 @@ envVarGroups:
         value: "true"
       - key: JWT_SECRET
         sync: false
+      - key: OTEL_EXPORTER_OTLP_ENDPOINT
+        sync: false
+      - key: LOG_LEVEL
+        value: info
