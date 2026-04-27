@@ -9,7 +9,7 @@ RUN go mod download
 COPY . .
 RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -o /bin/delivery-service ./cmd/delivery-service
 
-FROM alpine:3.21
+FROM alpine:3.23
 RUN apk add --no-cache ca-certificates tzdata
 COPY --from=builder /bin/delivery-service /bin/delivery-service
 
