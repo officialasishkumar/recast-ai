@@ -30,7 +30,11 @@ export function useHotkey(
   const registry = useContext(ShortcutsRegistryContext);
   const id = useId();
   const handlerRef = useRef(handler);
-  handlerRef.current = handler;
+  // Keep the ref in sync with the latest handler in an effect so we don't
+  // mutate refs during render (a React 19 violation).
+  useEffect(() => {
+    handlerRef.current = handler;
+  }, [handler]);
 
   // Register with overlay registry.
   useEffect(() => {

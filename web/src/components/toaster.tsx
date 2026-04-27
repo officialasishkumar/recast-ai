@@ -232,7 +232,14 @@ function ToastCard({ toast, onDismiss, paused }: ToastCardProps) {
   const [leaving, setLeaving] = React.useState(false);
   const timerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
   const remainingRef = React.useRef<number>(toast.duration);
-  const startedAtRef = React.useRef<number>(Date.now());
+  // Lazy ref init: Date.now() must not be called during render (impure), so
+  // seed the ref on first mount via an effect.
+  const startedAtRef = React.useRef<number>(0);
+  React.useEffect(() => {
+    if (startedAtRef.current === 0) {
+      startedAtRef.current = Date.now();
+    }
+  }, []);
 
   const variantCfg = VARIANT_STYLES[toast.variant];
 

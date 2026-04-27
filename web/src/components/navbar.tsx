@@ -58,10 +58,7 @@ function useCurrentUser(authenticated: boolean) {
   const [user, setUser] = useState<MeResponse | null>(null);
 
   useEffect(() => {
-    if (!authenticated) {
-      setUser(null);
-      return;
-    }
+    if (!authenticated) return;
     const token = localStorage.getItem("token");
     if (!token) return;
     const base =
@@ -81,7 +78,9 @@ function useCurrentUser(authenticated: boolean) {
     return () => controller.abort();
   }, [authenticated]);
 
-  return user;
+  // Derive the public value from auth state so we don't setState in an
+  // effect just to clear it.
+  return authenticated ? user : null;
 }
 
 const AUTHED_LINKS = [
@@ -101,6 +100,13 @@ export function Navbar() {
   const user = useCurrentUser(authenticated);
   const [menuOpen, setMenuOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
+  // Track the previous pathname via state so we can react to route changes
+  // during render (React 19 forbids reading refs during render).
+  const [prevPathname, setPrevPathname] = useState(pathname);
+  if (prevPathname !== pathname) {
+    setPrevPathname(pathname);
+    if (menuOpen) setMenuOpen(false);
+  }
 
   useEffect(() => {
     function handleClickOutside(e: MouseEvent) {
@@ -118,10 +124,6 @@ export function Navbar() {
       document.removeEventListener("keydown", handleEscape);
     };
   }, []);
-
-  useEffect(() => {
-    setMenuOpen(false);
-  }, [pathname]);
 
   function logout() {
     localStorage.removeItem("token");

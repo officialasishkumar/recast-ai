@@ -125,7 +125,9 @@ function initialsFrom(user: ApiUser | null): string {
 
 export default function SettingsPage() {
   const router = useRouter();
-  const [section, setSection] = useState<SectionKey>("profile");
+  // Initialize section from the URL hash on first render so we don't have
+  // to setState in an effect to seed it.
+  const [section, setSection] = useState<SectionKey>(() => parseHash());
   const [user, setUser] = useState<ApiUser | null>(null);
   const [loading, setLoading] = useState(true);
 
@@ -152,10 +154,9 @@ export default function SettingsPage() {
     };
   }, [router]);
 
-  // Hash-based deep linking.
+  // Hash-based deep linking — keep section in sync with the URL.
   useEffect(() => {
     if (typeof window === "undefined") return;
-    setSection(parseHash());
     function onHashChange() {
       setSection(parseHash());
     }
@@ -400,30 +401,37 @@ function ProfileSection({ user, loading, onUserChange }: ProfileSectionProps) {
   const [name, setName] = useState(user?.name ?? "");
   const [saveState, setSaveState] = useState<SaveState>("idle");
   const [copied, setCopied] = useState(false);
-  const lastPersistedName = useRef<string>(user?.name ?? "");
+  const [lastPersistedName, setLastPersistedName] = useState<string>(
+    user?.name ?? "",
+  );
   const debouncedName = useDebouncedValue(name, 800);
 
-  useEffect(() => {
-    if (user) {
-      setName(user.name ?? "");
-      lastPersistedName.current = user.name ?? "";
-    }
-  }, [user]);
+  // Sync the input value when the user prop changes (e.g. after refetch).
+  // The "set state during render to track props" pattern is preferred in
+  // React 19 over running setState inside a useEffect.
+  const [prevUserId, setPrevUserId] = useState(user?.id);
+  if (user && user.id !== prevUserId) {
+    setPrevUserId(user.id);
+    const next = user.name ?? "";
+    if (name !== next) setName(next);
+    if (lastPersistedName !== next) setLastPersistedName(next);
+  }
+
+  // Derive "saving" from the debounced state so we don't need a setState
+  // inside the effect just to flip the indicator on.
+  const trimmedDebounced = debouncedName.trim();
+  const dirty =
+    !!user && !!trimmedDebounced && trimmedDebounced !== lastPersistedName;
 
   // Autosave on debounce only when the field is unfocused (blur-triggered).
   // We rely on debouncedName to settle then persist if the value changed.
   useEffect(() => {
-    if (!user) return;
-    const trimmed = debouncedName.trim();
-    if (!trimmed) return;
-    if (trimmed === lastPersistedName.current) return;
-
+    if (!dirty) return;
     let cancelled = false;
-    setSaveState("saving");
-    updatePreferences({ name: trimmed })
+    updatePreferences({ name: trimmedDebounced })
       .then((next) => {
         if (cancelled) return;
-        lastPersistedName.current = trimmed;
+        setLastPersistedName(trimmedDebounced);
         if (next) onUserChange(next);
         setSaveState("saved");
       })
@@ -433,7 +441,9 @@ function ProfileSection({ user, loading, onUserChange }: ProfileSectionProps) {
     return () => {
       cancelled = true;
     };
-  }, [debouncedName, user, onUserChange]);
+  }, [dirty, trimmedDebounced, onUserChange]);
+
+  const effectiveSaveState: SaveState = dirty ? "saving" : saveState;
 
   function onCopyEmail() {
     if (!user?.email) return;
@@ -521,7 +531,7 @@ function ProfileSection({ user, loading, onUserChange }: ProfileSectionProps) {
               autoComplete="name"
               placeholder="Your name"
             />
-            <SaveStatus state={saveState} />
+            <SaveStatus state={effectiveSaveState} />
           </div>
 
           <div>
@@ -619,20 +629,20 @@ function SaveStatus({ state }: { state: SaveState }) {
 function PreferencesSection() {
   const [voices, setVoices] = useState<ApiVoice[]>([]);
   const [voicesLoading, setVoicesLoading] = useState(true);
-  const [prefs, setPrefs] = useState<Preferences>({
+  // Seed local preferences during render with a lazy initializer so we
+  // don't have to setState in the effect just to merge the cached values.
+  const [prefs, setPrefs] = useState<Preferences>(() => ({
     voice_id: undefined,
     language: "en",
     style: "formal",
-  });
+    ...readLocalPreferences(),
+  }));
   const [saveState, setSaveState] = useState<SaveState>("idle");
   const [languageOpen, setLanguageOpen] = useState(false);
   const languageRootRef = useRef<HTMLDivElement | null>(null);
 
-  // Initial load: read local fallback + fetch voices.
+  // Initial load: fetch voices.
   useEffect(() => {
-    const stored = readLocalPreferences();
-    setPrefs((p) => ({ ...p, ...stored }));
-    setVoicesLoading(true);
     let cancelled = false;
     getVoices()
       .then((list) => {

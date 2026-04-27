@@ -183,9 +183,8 @@ export function ShortcutsOverlay() {
     };
   }, [open]);
 
-  const shortcuts = state?.shortcuts ?? [];
-
   const grouped = React.useMemo(() => {
+    const shortcuts = state?.shortcuts ?? [];
     const bySection = new Map<string, RegisteredShortcut[]>();
     for (const s of shortcuts) {
       const sec = s.section ?? "General";
@@ -198,7 +197,7 @@ export function ShortcutsOverlay() {
       if (b === "General") return 1;
       return a.localeCompare(b);
     });
-  }, [shortcuts]);
+  }, [state?.shortcuts]);
 
   if (!mounted || !open) {
     return <style>{OVERLAY_STYLES}</style>;

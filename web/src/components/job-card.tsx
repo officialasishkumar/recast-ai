@@ -243,11 +243,8 @@ function Thumbnail({ job, variant }: ThumbnailProps) {
   const [failed, setFailed] = useState(false);
 
   useEffect(() => {
+    if (!job.thumbnail_path) return;
     let cancelled = false;
-    if (!job.thumbnail_path) {
-      setSrc(null);
-      return;
-    }
     resolveThumbnail(job.id, job.thumbnail_path).then((url) => {
       if (!cancelled) setSrc(url);
     });
@@ -256,7 +253,7 @@ function Thumbnail({ job, variant }: ThumbnailProps) {
     };
   }, [job.id, job.thumbnail_path]);
 
-  const showImage = src && !failed;
+  const showImage = job.thumbnail_path && src && !failed;
   const seconds =
     typeof job.duration === "number"
       ? job.duration
