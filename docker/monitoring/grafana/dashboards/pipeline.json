@@ -1,0 +1,122 @@
+{
+  "title": "Recast AI · Pipeline Overview",
+  "uid": "recast-pipeline",
+  "tags": ["recast", "pipeline"],
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "30s",
+  "time": {"from": "now-1h", "to": "now"},
+  "templating": {
+    "list": [
+      {
+        "name": "service",
+        "type": "query",
+        "datasource": {"type": "prometheus", "uid": "prometheus"},
+        "query": "label_values(up, job)",
+        "refresh": 2,
+        "includeAll": true,
+        "multi": true
+      }
+    ]
+  },
+  "panels": [
+    {
+      "type": "stat",
+      "title": "Jobs submitted (5m)",
+      "gridPos": {"h": 4, "w": 4, "x": 0, "y": 0},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [{"expr": "sum(increase(jobs_submitted_total[5m]))"}],
+      "fieldConfig": {"defaults": {"color": {"mode": "thresholds"}, "thresholds": {"mode": "absolute", "steps": [{"value": null, "color": "blue"}]}}}
+    },
+    {
+      "type": "stat",
+      "title": "Jobs completed (5m)",
+      "gridPos": {"h": 4, "w": 4, "x": 4, "y": 0},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [{"expr": "sum(increase(jobs_completed_total[5m]))"}],
+      "fieldConfig": {"defaults": {"color": {"mode": "thresholds"}, "thresholds": {"mode": "absolute", "steps": [{"value": null, "color": "green"}]}}}
+    },
+    {
+      "type": "stat",
+      "title": "Jobs failed (5m)",
+      "gridPos": {"h": 4, "w": 4, "x": 8, "y": 0},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [{"expr": "sum(increase(jobs_failed_total[5m]))"}],
+      "fieldConfig": {"defaults": {"color": {"mode": "thresholds"}, "thresholds": {"mode": "absolute", "steps": [{"value": null, "color": "red"}]}}}
+    },
+    {
+      "type": "gauge",
+      "title": "Success rate (15m)",
+      "gridPos": {"h": 4, "w": 6, "x": 12, "y": 0},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [{
+        "expr": "1 - (sum(rate(jobs_failed_total[15m])) / clamp_min(sum(rate(jobs_submitted_total[15m])), 0.001))"
+      }],
+      "fieldConfig": {"defaults": {"unit": "percentunit", "min": 0, "max": 1, "thresholds": {"mode": "absolute", "steps": [{"value": null, "color": "red"}, {"value": 0.95, "color": "yellow"}, {"value": 0.99, "color": "green"}]}}}
+    },
+    {
+      "type": "stat",
+      "title": "Services up",
+      "gridPos": {"h": 4, "w": 6, "x": 18, "y": 0},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [{"expr": "sum(up{job=~\"$service\"})"}, {"expr": "count(up{job=~\"$service\"})"}],
+      "fieldConfig": {"defaults": {"color": {"mode": "thresholds"}}}
+    },
+    {
+      "type": "timeseries",
+      "title": "Stage duration (p95)",
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 4},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [{
+        "expr": "histogram_quantile(0.95, sum by (le, stage) (rate(stage_duration_seconds_bucket[5m])))",
+        "legendFormat": "{{stage}}"
+      }],
+      "fieldConfig": {"defaults": {"unit": "s"}}
+    },
+    {
+      "type": "timeseries",
+      "title": "Throughput (jobs/min)",
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 4},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [
+        {"expr": "sum(rate(jobs_submitted_total[5m])) * 60", "legendFormat": "submitted"},
+        {"expr": "sum(rate(jobs_completed_total[5m])) * 60", "legendFormat": "completed"},
+        {"expr": "sum(rate(jobs_failed_total[5m])) * 60", "legendFormat": "failed"}
+      ],
+      "fieldConfig": {"defaults": {"unit": "ops"}}
+    },
+    {
+      "type": "timeseries",
+      "title": "HTTP request rate by service",
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 12},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [{
+        "expr": "sum by (service) (rate(http_requests_total[5m]))",
+        "legendFormat": "{{service}}"
+      }],
+      "fieldConfig": {"defaults": {"unit": "reqps"}}
+    },
+    {
+      "type": "timeseries",
+      "title": "HTTP latency p95 by service",
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 12},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [{
+        "expr": "histogram_quantile(0.95, sum by (le, service) (rate(http_request_duration_seconds_bucket[5m])))",
+        "legendFormat": "{{service}}"
+      }],
+      "fieldConfig": {"defaults": {"unit": "s"}}
+    },
+    {
+      "type": "logs",
+      "title": "Live logs (errors first)",
+      "gridPos": {"h": 8, "w": 24, "x": 0, "y": 20},
+      "datasource": {"type": "loki", "uid": "loki"},
+      "targets": [{
+        "expr": "{service=~\"$service\"} | json | level=~\"error|warn\""
+      }],
+      "options": {"showTime": true, "wrapLogMessage": true, "sortOrder": "Descending"}
+    }
+  ]
+}

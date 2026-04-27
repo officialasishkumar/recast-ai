@@ -11,22 +11,31 @@ import (
 	"os/signal"
 	"path/filepath"
 	"syscall"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/jmoiron/sqlx"
 	"github.com/redis/go-redis/v9"
 
 	"github.com/officialasishkumar/recast-ai/pkg/config"
-	"github.com/officialasishkumar/recast-ai/pkg/health"
 	"github.com/officialasishkumar/recast-ai/pkg/database"
+	"github.com/officialasishkumar/recast-ai/pkg/health"
 	"github.com/officialasishkumar/recast-ai/pkg/models"
+	"github.com/officialasishkumar/recast-ai/pkg/observability"
 	"github.com/officialasishkumar/recast-ai/pkg/queue"
 	"github.com/officialasishkumar/recast-ai/pkg/storage"
 )
 
 func main() {
-	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo}))
+	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo})).
+		With(slog.String("service", "mux-service"))
 	slog.SetDefault(logger)
+
+	obs, err := observability.Setup("mux-service", "9102", logger)
+	if err != nil {
+		logger.Error("failed to start observability", "error", err)
+		os.Exit(1)
+	}
 
 	health.Serve(logger)
 
@@ -101,18 +110,24 @@ func main() {
 		select {
 		case <-ctx.Done():
 			logger.Info("stopped")
+			obs.Shutdown(context.Background())
 			return
 		case delivery, ok := <-msgs:
 			if !ok {
 				logger.Warn("message channel closed")
+				obs.Shutdown(context.Background())
 				return
 			}
 
+			start := time.Now()
 			if err := processMessage(ctx, logger, db, qConn, store, rdb, delivery.Body); err != nil {
 				logger.Error("processing failed", "error", err)
+				obs.Metrics.QueueFailed.WithLabelValues(queue.AudioQueue, "process_error").Inc()
 				delivery.Nack(false, true)
 				continue
 			}
+			obs.Metrics.QueueConsumed.WithLabelValues(queue.AudioQueue).Inc()
+			obs.Metrics.QueueProcessSeconds.WithLabelValues(queue.AudioQueue).Observe(time.Since(start).Seconds())
 			delivery.Ack(false)
 		}
 	}

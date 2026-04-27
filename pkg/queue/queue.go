@@ -8,6 +8,7 @@ import (
 	"time"
 
 	amqp "github.com/rabbitmq/amqp091-go"
+	"go.opentelemetry.io/otel"
 )
 
 // Queue names used across services.
@@ -92,19 +93,53 @@ func (c *Connection) DeclareQueue(name string) error {
 	return nil
 }
 
-// Publish publishes a JSON message to a queue.
+// Publish publishes a JSON message to a queue. The current trace context (if
+// any) is propagated through AMQP headers so consumers can continue the span.
 func (c *Connection) Publish(ctx context.Context, queueName string, msg any) error {
 	body, err := json.Marshal(msg)
 	if err != nil {
 		return fmt.Errorf("marshal message: %w", err)
 	}
 
+	headers := amqp.Table{}
+	otel.GetTextMapPropagator().Inject(ctx, amqpCarrier(headers))
+
 	return c.channel.PublishWithContext(ctx, "", queueName, false, false, amqp.Publishing{
 		DeliveryMode: amqp.Persistent,
 		ContentType:  "application/json",
 		Body:         body,
 		Timestamp:    time.Now(),
+		Headers:      headers,
 	})
+}
+
+// amqpCarrier adapts amqp.Table to OpenTelemetry's TextMapCarrier so trace
+// context can be propagated across queue boundaries.
+type amqpCarrier amqp.Table
+
+func (c amqpCarrier) Get(key string) string {
+	if v, ok := c[key]; ok {
+		if s, ok := v.(string); ok {
+			return s
+		}
+	}
+	return ""
+}
+
+func (c amqpCarrier) Set(key, value string) { c[key] = value }
+
+func (c amqpCarrier) Keys() []string {
+	keys := make([]string, 0, len(c))
+	for k := range c {
+		keys = append(keys, k)
+	}
+	return keys
+}
+
+// ExtractContext pulls trace context from a delivery's headers and returns a
+// derived context. Use this in consumers to continue the producer's span.
+func ExtractContext(parent context.Context, headers amqp.Table) context.Context {
+	return otel.GetTextMapPropagator().Extract(parent, amqpCarrier(headers))
 }
 
 // Consume returns a channel of deliveries for the given queue.

@@ -19,6 +19,7 @@ import (
 	ws "github.com/officialasishkumar/recast-ai/internal/gateway/websocket"
 	"github.com/officialasishkumar/recast-ai/pkg/config"
 	"github.com/officialasishkumar/recast-ai/pkg/database"
+	"github.com/officialasishkumar/recast-ai/pkg/observability"
 	"github.com/officialasishkumar/recast-ai/pkg/queue"
 	"github.com/officialasishkumar/recast-ai/pkg/storage"
 )
@@ -44,9 +45,17 @@ func main() {
 	default:
 		level = slog.LevelInfo
 	}
-	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: level}))
+	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: level})).
+		With(slog.String("service", "api-gateway"))
 	slog.SetDefault(logger)
 	logger.Info("starting api-gateway", "env", base.Environment)
+
+	// ---- observability ----
+	obs, err := observability.Setup("api-gateway", "9100", logger)
+	if err != nil {
+		logger.Error("failed to start observability", "error", err)
+		os.Exit(1)
+	}
 
 	// ---- database ----
 	db, err := database.Connect(dbCfg, logger)
@@ -116,6 +125,7 @@ func main() {
 	r.Use(chimw.RealIP)
 	r.Use(chimw.Logger)
 	r.Use(chimw.Recoverer)
+	r.Use(observability.HTTPMiddleware("api-gateway", obs.Metrics))
 	r.Use(cors.Handler(cors.Options{
 		AllowedOrigins:   []string{"*"},
 		AllowedMethods:   []string{"GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"},
@@ -212,6 +222,8 @@ func main() {
 	if err := srv.Shutdown(shutCtx); err != nil {
 		logger.Error("http server shutdown error", "error", err)
 	}
+
+	obs.Shutdown(shutCtx)
 
 	logger.Info("api-gateway stopped")
 }

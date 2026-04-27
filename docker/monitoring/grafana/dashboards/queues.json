@@ -1,0 +1,53 @@
+{
+  "title": "Recast AI · RabbitMQ Queues",
+  "uid": "recast-queues",
+  "tags": ["recast", "queues", "rabbitmq"],
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "15s",
+  "time": {"from": "now-1h", "to": "now"},
+  "panels": [
+    {
+      "type": "timeseries",
+      "title": "Messages ready",
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 0},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [{
+        "expr": "rabbitmq_queue_messages_ready{queue!~\".*\\\\.dlq\"}",
+        "legendFormat": "{{queue}}"
+      }]
+    },
+    {
+      "type": "timeseries",
+      "title": "Messages unacked",
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 0},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [{
+        "expr": "rabbitmq_queue_messages_unacked",
+        "legendFormat": "{{queue}}"
+      }]
+    },
+    {
+      "type": "timeseries",
+      "title": "Publish / deliver rate",
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 8},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [
+        {"expr": "sum by (queue) (rate(rabbitmq_queue_messages_published_total[1m]))", "legendFormat": "publish · {{queue}}"},
+        {"expr": "sum by (queue) (rate(rabbitmq_queue_messages_delivered_total[1m]))", "legendFormat": "deliver · {{queue}}"}
+      ]
+    },
+    {
+      "type": "stat",
+      "title": "Dead-letter queue depth",
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 8},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [{
+        "expr": "rabbitmq_queue_messages{queue=~\".*\\\\.dlq\"}",
+        "legendFormat": "{{queue}}"
+      }],
+      "fieldConfig": {"defaults": {"color": {"mode": "thresholds"}, "thresholds": {"mode": "absolute", "steps": [{"value": null, "color": "green"}, {"value": 1, "color": "yellow"}, {"value": 50, "color": "red"}]}}}
+    }
+  ]
+}

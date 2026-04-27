@@ -1,0 +1,62 @@
+{
+  "title": "Recast AI · Service Health",
+  "uid": "recast-services",
+  "tags": ["recast", "services"],
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "30s",
+  "time": {"from": "now-1h", "to": "now"},
+  "panels": [
+    {
+      "type": "stat",
+      "title": "Service uptime",
+      "gridPos": {"h": 4, "w": 24, "x": 0, "y": 0},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [{"expr": "up", "legendFormat": "{{job}}"}],
+      "fieldConfig": {"defaults": {"color": {"mode": "thresholds"}, "thresholds": {"mode": "absolute", "steps": [{"value": null, "color": "red"}, {"value": 1, "color": "green"}]}}}
+    },
+    {
+      "type": "timeseries",
+      "title": "Process CPU (Go services)",
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 4},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [{
+        "expr": "rate(process_cpu_seconds_total[2m])",
+        "legendFormat": "{{job}}"
+      }]
+    },
+    {
+      "type": "timeseries",
+      "title": "Goroutines",
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 4},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [{
+        "expr": "go_goroutines",
+        "legendFormat": "{{job}}"
+      }]
+    },
+    {
+      "type": "timeseries",
+      "title": "Heap in use",
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 12},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [{
+        "expr": "go_memstats_heap_inuse_bytes",
+        "legendFormat": "{{job}}"
+      }],
+      "fieldConfig": {"defaults": {"unit": "bytes"}}
+    },
+    {
+      "type": "timeseries",
+      "title": "Container memory (cAdvisor)",
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 12},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [{
+        "expr": "sum by (container_label_com_docker_compose_service) (container_memory_working_set_bytes{container_label_com_docker_compose_service!=\"\"})",
+        "legendFormat": "{{container_label_com_docker_compose_service}}"
+      }],
+      "fieldConfig": {"defaults": {"unit": "bytes"}}
+    }
+  ]
+}

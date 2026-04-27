@@ -1,0 +1,93 @@
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+  external_labels:
+    cluster: recast-ai
+    env: ${ENV:-development}
+
+rule_files:
+  - /etc/prometheus/rules/*.yml
+
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets: [alertmanager:9093]
+
+scrape_configs:
+  - job_name: prometheus
+    static_configs:
+      - targets: [localhost:9090]
+
+  - job_name: otel-collector
+    static_configs:
+      - targets: [otel-collector:8889]
+    metrics_path: /metrics
+
+  - job_name: otel-collector-self
+    static_configs:
+      - targets: [otel-collector:8888]
+
+  # Recast Go services expose Prometheus metrics directly on a sidecar port.
+  - job_name: api-gateway
+    metrics_path: /metrics
+    static_configs:
+      - targets: [api-gateway:9100]
+        labels:
+          service: api-gateway
+
+  - job_name: upload-service
+    metrics_path: /metrics
+    static_configs:
+      - targets: [upload-service:9101]
+        labels:
+          service: upload-service
+
+  - job_name: mux-service
+    metrics_path: /metrics
+    static_configs:
+      - targets: [mux-service:9102]
+        labels:
+          service: mux-service
+
+  - job_name: delivery-service
+    metrics_path: /metrics
+    static_configs:
+      - targets: [delivery-service:9103]
+        labels:
+          service: delivery-service
+
+  - job_name: video-analyzer
+    metrics_path: /metrics
+    static_configs:
+      - targets: [video-analyzer:9104]
+        labels:
+          service: video-analyzer
+
+  - job_name: tts-service
+    metrics_path: /metrics
+    static_configs:
+      - targets: [tts-service:9105]
+        labels:
+          service: tts-service
+
+  # Infrastructure exporters.
+  - job_name: rabbitmq
+    metrics_path: /metrics
+    static_configs:
+      - targets: [rabbitmq:15692]
+
+  - job_name: redis
+    static_configs:
+      - targets: [redis-exporter:9121]
+
+  - job_name: postgres
+    static_configs:
+      - targets: [postgres-exporter:9187]
+
+  - job_name: cadvisor
+    static_configs:
+      - targets: [cadvisor:8080]
+
+  - job_name: node-exporter
+    static_configs:
+      - targets: [node-exporter:9100]

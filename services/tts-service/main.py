@@ -31,6 +31,12 @@ from fastapi import FastAPI
 from minio import Minio
 
 from config import settings
+from observability import (
+    JOB_DURATION,
+    JOBS_PROCESSED,
+    QUEUE_MESSAGES,
+    setup_observability,
+)
 from tts.alignment import align_words_to_segment
 from tts.speed_control import FitResult, fit_to_segment
 from tts.synthesizer import SynthesisResult, TTSProvider, build_provider
@@ -514,6 +520,7 @@ def _run_consumer() -> None:
                 if method is None:
                     continue
 
+                start = time.monotonic()
                 try:
                     _process_message(
                         body,
@@ -524,13 +531,35 @@ def _run_consumer() -> None:
                         channel,
                     )
                     channel.basic_ack(delivery_tag=method.delivery_tag)
-                    logger.info("message_acked", delivery_tag=method.delivery_tag)
+                    elapsed = time.monotonic() - start
+                    JOB_DURATION.labels(service="tts-service").observe(elapsed)
+                    JOBS_PROCESSED.labels(
+                        service="tts-service", outcome="success"
+                    ).inc()
+                    QUEUE_MESSAGES.labels(
+                        service="tts-service",
+                        queue=TRANSCRIPT_QUEUE,
+                        outcome="ack",
+                    ).inc()
+                    logger.info(
+                        "message_acked",
+                        delivery_tag=method.delivery_tag,
+                        elapsed_seconds=round(elapsed, 2),
+                    )
                 except Exception:
                     logger.error(
                         "message_processing_failed",
                         delivery_tag=method.delivery_tag,
                         exc_info=True,
                     )
+                    JOBS_PROCESSED.labels(
+                        service="tts-service", outcome="failure"
+                    ).inc()
+                    QUEUE_MESSAGES.labels(
+                        service="tts-service",
+                        queue=TRANSCRIPT_QUEUE,
+                        outcome="nack",
+                    ).inc()
                     channel.basic_nack(
                         delivery_tag=method.delivery_tag, requeue=False
                     )
@@ -569,6 +598,8 @@ def _signal_handler(signum: int, _frame: Any) -> None:
 def main() -> None:
     signal.signal(signal.SIGINT, _signal_handler)
     signal.signal(signal.SIGTERM, _signal_handler)
+
+    setup_observability("tts-service", default_port=9105)
 
     health_thread = threading.Thread(target=_run_health_server, daemon=True)
     health_thread.start()

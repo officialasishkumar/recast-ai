@@ -37,6 +37,12 @@ from minio import Minio
 
 from analyzer.gemini import GeminiVideoAnalyzer
 from config import settings
+from observability import (
+    JOB_DURATION,
+    JOBS_PROCESSED,
+    QUEUE_MESSAGES,
+    setup_observability,
+)
 
 # --------------------------------------------------------------------------- #
 # Logging
@@ -496,6 +502,7 @@ def _run_consumer() -> None:
                 if method is None:
                     continue
 
+                start = time.monotonic()
                 try:
                     _process_message(
                         body,
@@ -506,9 +513,20 @@ def _run_consumer() -> None:
                         channel,
                     )
                     channel.basic_ack(delivery_tag=method.delivery_tag)
+                    elapsed = time.monotonic() - start
+                    JOB_DURATION.labels(service="video-analyzer").observe(elapsed)
+                    JOBS_PROCESSED.labels(
+                        service="video-analyzer", outcome="success"
+                    ).inc()
+                    QUEUE_MESSAGES.labels(
+                        service="video-analyzer",
+                        queue=INGESTION_QUEUE,
+                        outcome="ack",
+                    ).inc()
                     logger.info(
                         "message_acked",
                         delivery_tag=method.delivery_tag,
+                        elapsed_seconds=round(elapsed, 2),
                     )
                 except Exception:
                     logger.error(
@@ -516,6 +534,14 @@ def _run_consumer() -> None:
                         delivery_tag=method.delivery_tag,
                         exc_info=True,
                     )
+                    JOBS_PROCESSED.labels(
+                        service="video-analyzer", outcome="failure"
+                    ).inc()
+                    QUEUE_MESSAGES.labels(
+                        service="video-analyzer",
+                        queue=INGESTION_QUEUE,
+                        outcome="nack",
+                    ).inc()
                     with suppress(Exception):
                         pg_conn.rollback()
                     channel.basic_nack(
@@ -557,6 +583,8 @@ def _signal_handler(signum: int, _frame: Any) -> None:
 def main() -> None:
     signal.signal(signal.SIGINT, _signal_handler)
     signal.signal(signal.SIGTERM, _signal_handler)
+
+    setup_observability("video-analyzer", default_port=9104)
 
     health_thread = threading.Thread(target=_run_health_server, daemon=True)
     health_thread.start()

@@ -1,0 +1,13 @@
+apiVersion: 1
+
+providers:
+  - name: recast
+    orgId: 1
+    folder: Recast AI
+    type: file
+    disableDeletion: false
+    updateIntervalSeconds: 30
+    allowUiUpdates: true
+    options:
+      path: /etc/grafana/dashboards
+      foldersFromFilesStructure: true

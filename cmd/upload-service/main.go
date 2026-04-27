@@ -29,6 +29,7 @@ import (
 	"github.com/officialasishkumar/recast-ai/pkg/config"
 	"github.com/officialasishkumar/recast-ai/pkg/database"
 	"github.com/officialasishkumar/recast-ai/pkg/models"
+	"github.com/officialasishkumar/recast-ai/pkg/observability"
 	"github.com/officialasishkumar/recast-ai/pkg/queue"
 	"github.com/officialasishkumar/recast-ai/pkg/storage"
 )
@@ -116,7 +117,8 @@ type statusResponse struct {
 }
 
 func main() {
-	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo}))
+	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo})).
+		With(slog.String("service", "upload-service"))
 	slog.SetDefault(logger)
 
 	baseCfg := config.LoadBase("upload-service")
@@ -127,6 +129,12 @@ func main() {
 	authCfg := config.LoadAuth()
 
 	logger.Info("starting service", "service", baseCfg.ServiceName, "env", baseCfg.Environment)
+
+	obs, err := observability.Setup("upload-service", "9101", logger)
+	if err != nil {
+		logger.Error("failed to start observability", "error", err)
+		os.Exit(1)
+	}
 
 	qConn, err := queue.Connect(rabbitCfg.URL(), logger)
 	if err != nil {
@@ -165,6 +173,7 @@ func main() {
 	r.Use(chimw.Recoverer)
 	r.Use(chimw.RequestID)
 	r.Use(requestLogger(logger))
+	r.Use(observability.HTTPMiddleware("upload-service", obs.Metrics))
 
 	r.Get("/health", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]string{"status": "ok", "service": "upload-service"})
@@ -206,6 +215,7 @@ func main() {
 	if err := httpSrv.Shutdown(ctx); err != nil {
 		logger.Error("server shutdown error", "error", err)
 	}
+	obs.Shutdown(ctx)
 	logger.Info("stopped")
 }
 
