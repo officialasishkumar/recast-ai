@@ -55,7 +55,7 @@ jobs:
       - name: Install golangci-lint
         uses: golangci/golangci-lint-action@v8
         with:
-          version: v2.6.1
+          version: v2.11.4
           args: --timeout=5m --config=.golangci.yml
 
       - name: Run migrations
