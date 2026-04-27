@@ -261,12 +261,47 @@ Idempotency is ensured via `stage_attempt_id` UUIDs. Duplicate messages are sile
 
 ## CI/CD
 
-GitHub Actions pipelines.
+Eight GitHub Actions pipelines cover lint, test, security, and release.
 
-- **CI** (`ci.yml`): Go tests, Python linting, frontend build, Docker image builds on every push and PR to `main`.
-- **E2E** (`e2e.yml`): Runs the committed sample-recording regression harness against a full compose stack.
-- **CodeQL** (`codeql.yml`): Static security analysis on Go, Python, and TypeScript.
-- **Deploy** (`deploy.yml`): Triggered on version tags — builds and pushes images to GHCR, deploys to staging and production.
+| Workflow | When | What it does |
+|---|---|---|
+| **CI** (`ci.yml`) | push / PR to `main` | Go lint + race tests, Python lint + pytest, frontend lint + build, Docker image builds, critical-package coverage gate |
+| **E2E** (`e2e.yml`) | PRs | Full compose stack with a deterministic Gemini stub, exercising the upload to narrate to mux to deliver flow |
+| **CodeQL** (`codeql.yml`) | push / PR / weekly | Static analysis for Go, Python, and TypeScript with `security-and-quality` queries |
+| **Security** (`security.yml`) | push / PR / weekly | Gitleaks, Trivy filesystem and image scans, hadolint, govulncheck, pip-audit, npm audit, Semgrep |
+| **Dependency Review** (`dependency-review.yml`) | PR | Blocks PRs that introduce high-severity or AGPL-licensed dependencies |
+| **SBOM** (`sbom.yml`) | push / tag | Generates SPDX + CycloneDX SBOMs with Syft and attaches them to GitHub Releases |
+| **Performance Smoke** (`perf-smoke.yml`) | PR (gateway-touching) | k6 smoke test asserting `p95 < 250 ms`, `error rate < 1%` |
+| **Release** (`release.yml`) | tag `v*.*.*` | Multi-arch image builds, SLSA provenance, SBOM attestations, keyless cosign signing, auto-generated release notes |
+| **Deploy** (`deploy.yml`) | tag `v*` / manual | GHCR image push and staged rollout to staging and production environments |
+
+## Observability
+
+A complete monitoring stack is bundled in `docker/monitoring`. Local
+`docker compose up` brings up:
+
+- **Prometheus** with alert rules on `:9090`
+- **Alertmanager** on `:9093`
+- **Grafana** with provisioned dashboards on `:3001`
+- **Loki** for log aggregation on `:3100`
+- **Tempo** for trace storage on `:3200`
+- **OpenTelemetry Collector** fanning OTLP traces, metrics, and logs out to Tempo, Prometheus, and Loki
+- **cAdvisor**, **node-exporter**, **redis-exporter**, **postgres-exporter** for infra metrics
+
+Every Go and Python service exposes a `/metrics` endpoint on a sidecar
+port (`9100` to `9105`) and emits OTLP traces to the collector. The
+RabbitMQ Prometheus plugin is enabled by default. Grafana ships with
+three dashboards (`Pipeline Overview`, `RabbitMQ Queues`, `Service
+Health`) and Loki is wired into trace exemplars so you can jump from a
+span to its log line in one click.
+
+## Production deployment
+
+Production deploys go out via the Helm chart in
+[`deploy/helm/recast-ai`](deploy/helm/recast-ai). The chart provides
+Deployments, HPAs, PodDisruptionBudgets, ServiceMonitors,
+NetworkPolicies, and an optional Ingress. See
+[`deploy/README.md`](deploy/README.md) for the install commands.
 
 ## Documentation
 
