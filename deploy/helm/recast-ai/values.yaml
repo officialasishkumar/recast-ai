@@ -1,0 +1,196 @@
+# Default values for the Recast AI Helm chart.
+# All keys here can be overridden with --set or -f my-values.yaml.
+
+global:
+  imageRegistry: ghcr.io
+  imageRepository: officialasishkumar/recast-ai
+  imagePullPolicy: IfNotPresent
+  imageTag: latest
+
+  podSecurityContext:
+    runAsNonRoot: true
+    runAsUser: 65532
+    runAsGroup: 65532
+    fsGroup: 65532
+    seccompProfile:
+      type: RuntimeDefault
+
+  containerSecurityContext:
+    allowPrivilegeEscalation: false
+    readOnlyRootFilesystem: true
+    capabilities:
+      drop: [ALL]
+
+# --- Service definitions ---
+# Each service follows the same shape so the templates can iterate uniformly.
+services:
+  apiGateway:
+    name: api-gateway
+    replicas: 2
+    image: api-gateway
+    port: 8080
+    metricsPort: 9100
+    serviceType: ClusterIP
+    resources:
+      requests: {cpu: 100m, memory: 128Mi}
+      limits:   {cpu: 500m, memory: 512Mi}
+    autoscaling:
+      enabled: true
+      minReplicas: 2
+      maxReplicas: 10
+      targetCPUUtilizationPercentage: 70
+    env:
+      LOG_LEVEL: info
+
+  uploadService:
+    name: upload-service
+    replicas: 2
+    image: upload-service
+    port: 8081
+    metricsPort: 9101
+    serviceType: ClusterIP
+    resources:
+      requests: {cpu: 200m, memory: 256Mi}
+      limits:   {cpu: 1, memory: 1Gi}
+    autoscaling:
+      enabled: true
+      minReplicas: 2
+      maxReplicas: 8
+      targetCPUUtilizationPercentage: 75
+
+  muxService:
+    name: mux-service
+    replicas: 2
+    image: mux-service
+    metricsPort: 9102
+    resources:
+      requests: {cpu: 500m, memory: 512Mi}
+      limits:   {cpu: 2, memory: 2Gi}
+    autoscaling:
+      enabled: true
+      minReplicas: 2
+      maxReplicas: 6
+      queueLength: 50
+
+  deliveryService:
+    name: delivery-service
+    replicas: 1
+    image: delivery-service
+    metricsPort: 9103
+    resources:
+      requests: {cpu: 100m, memory: 128Mi}
+      limits:   {cpu: 500m, memory: 512Mi}
+
+  videoAnalyzer:
+    name: video-analyzer
+    replicas: 2
+    image: video-analyzer
+    healthPort: 8082
+    metricsPort: 9104
+    resources:
+      requests: {cpu: 500m, memory: 1Gi}
+      limits:   {cpu: 2, memory: 4Gi}
+    autoscaling:
+      enabled: true
+      minReplicas: 1
+      maxReplicas: 6
+      queueLength: 20
+    extraEnv:
+      GEMINI_MODEL: gemini-2.5-pro
+
+  ttsService:
+    name: tts-service
+    replicas: 2
+    image: tts-service
+    healthPort: 8081
+    metricsPort: 9105
+    resources:
+      requests: {cpu: 250m, memory: 512Mi}
+      limits:   {cpu: 1, memory: 2Gi}
+    autoscaling:
+      enabled: true
+      minReplicas: 1
+      maxReplicas: 6
+      queueLength: 20
+
+  web:
+    name: web
+    replicas: 2
+    image: web
+    port: 3000
+    serviceType: ClusterIP
+    resources:
+      requests: {cpu: 100m, memory: 128Mi}
+      limits:   {cpu: 500m, memory: 512Mi}
+
+# --- Shared environment ---
+env:
+  ENVIRONMENT: production
+  LOG_LEVEL: info
+  OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4317
+
+# --- Secrets ---
+# Recommended: use ExternalSecrets / SealedSecrets to populate this Secret.
+secrets:
+  create: true
+  name: recast-ai-secrets
+  data:
+    JWT_SECRET: "change-me"
+    GEMINI_API_KEY: ""
+    ELEVENLABS_API_KEY: ""
+    AWS_ACCESS_KEY_ID: ""
+    AWS_SECRET_ACCESS_KEY: ""
+    GOOGLE_CLIENT_ID: ""
+    GOOGLE_CLIENT_SECRET: ""
+    GITHUB_CLIENT_ID: ""
+    GITHUB_CLIENT_SECRET: ""
+
+# --- Ingress (optional) ---
+ingress:
+  enabled: false
+  className: nginx
+  annotations:
+    cert-manager.io/cluster-issuer: letsencrypt-prod
+    nginx.ingress.kubernetes.io/proxy-body-size: 2g
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "600"
+  hosts:
+    - host: app.recast.ai
+      paths:
+        - {path: /, pathType: Prefix, service: web}
+        - {path: /v1, pathType: Prefix, service: api-gateway}
+  tls:
+    - hosts: [app.recast.ai]
+      secretName: recast-ai-tls
+
+# --- ServiceMonitor for kube-prometheus-stack ---
+serviceMonitor:
+  enabled: true
+  namespace: ""
+  interval: 30s
+  scrapeTimeout: 10s
+  labels: {}
+
+# --- PodDisruptionBudgets ---
+pdb:
+  enabled: true
+  minAvailable: 1
+
+# --- NetworkPolicies (deny-all by default with explicit allow rules) ---
+networkPolicy:
+  enabled: true
+
+# --- Dependencies (managed externally in production) ---
+externalDependencies:
+  postgres:
+    host: postgres-primary
+    port: 5432
+    database: recast
+  redis:
+    host: redis-master
+    port: 6379
+  rabbitmq:
+    host: rabbitmq
+    port: 5672
+  s3:
+    endpoint: minio.minio:9000
+    bucket: recast

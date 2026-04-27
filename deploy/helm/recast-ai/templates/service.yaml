@@ -1,0 +1,24 @@
+{{- range $key, $svc := .Values.services }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $.Release.Name }}-{{ $svc.name }}
+  labels:
+    {{- include "recast.serviceLabels" (dict "Chart" $.Chart "Release" $.Release "component" $svc.name) | nindent 4 }}
+spec:
+  type: {{ $svc.serviceType | default "ClusterIP" }}
+  selector:
+    {{- include "recast.serviceSelector" (dict "Release" $.Release "component" $svc.name) | nindent 4 }}
+  ports:
+    {{- if $svc.port }}
+    - name: http
+      port: {{ $svc.port }}
+      targetPort: http
+      protocol: TCP
+    {{- end }}
+    - name: metrics
+      port: {{ $svc.metricsPort }}
+      targetPort: metrics
+      protocol: TCP
+{{- end }}

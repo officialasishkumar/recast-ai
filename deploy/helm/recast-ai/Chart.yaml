@@ -1,0 +1,19 @@
+apiVersion: v2
+name: recast-ai
+description: Recast AI - AI-powered video narration platform
+type: application
+version: 0.1.0
+appVersion: "0.1.0"
+keywords:
+  - video
+  - narration
+  - tts
+  - gemini
+  - rabbitmq
+maintainers:
+  - name: Ashish Kumar
+    email: officialasishkumar@gmail.com
+home: https://github.com/officialasishkumar/recast-ai
+sources:
+  - https://github.com/officialasishkumar/recast-ai
+icon: https://raw.githubusercontent.com/officialasishkumar/recast-ai/main/web/src/app/favicon.ico

@@ -1,0 +1,131 @@
+{{- range $key, $svc := .Values.services }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ $.Release.Name }}-{{ $svc.name }}
+  labels:
+    {{- include "recast.serviceLabels" (dict "Chart" $.Chart "Release" $.Release "component" $svc.name) | nindent 4 }}
+  annotations:
+    kubectl.kubernetes.io/restartedAt: {{ now | quote }}
+spec:
+  replicas: {{ $svc.replicas }}
+  selector:
+    matchLabels:
+      {{- include "recast.serviceSelector" (dict "Release" $.Release "component" $svc.name) | nindent 6 }}
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 25%
+      maxUnavailable: 0
+  template:
+    metadata:
+      labels:
+        {{- include "recast.serviceSelector" (dict "Release" $.Release "component" $svc.name) | nindent 8 }}
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/path: "/metrics"
+        prometheus.io/port: {{ $svc.metricsPort | quote }}
+    spec:
+      automountServiceAccountToken: false
+      securityContext:
+        {{- toYaml $.Values.global.podSecurityContext | nindent 8 }}
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                topologyKey: kubernetes.io/hostname
+                labelSelector:
+                  matchLabels:
+                    {{- include "recast.serviceSelector" (dict "Release" $.Release "component" $svc.name) | nindent 20 }}
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: topology.kubernetes.io/zone
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              {{- include "recast.serviceSelector" (dict "Release" $.Release "component" $svc.name) | nindent 14 }}
+      containers:
+        - name: {{ $svc.name }}
+          image: {{ include "recast.image" (dict "global" $.Values.global "Chart" $.Chart "image" $svc.image) }}
+          imagePullPolicy: {{ $.Values.global.imagePullPolicy }}
+          securityContext:
+            {{- toYaml $.Values.global.containerSecurityContext | nindent 12 }}
+          ports:
+            {{- if $svc.port }}
+            - name: http
+              containerPort: {{ $svc.port }}
+              protocol: TCP
+            {{- end }}
+            {{- if $svc.healthPort }}
+            - name: health
+              containerPort: {{ $svc.healthPort }}
+              protocol: TCP
+            {{- end }}
+            - name: metrics
+              containerPort: {{ $svc.metricsPort }}
+              protocol: TCP
+          env:
+            - name: METRICS_PORT
+              value: {{ $svc.metricsPort | quote }}
+            - name: OTEL_SERVICE_NAME
+              value: {{ $svc.name }}
+            {{- range $k, $v := $svc.extraEnv | default dict }}
+            - name: {{ $k }}
+              value: {{ $v | quote }}
+            {{- end }}
+          envFrom:
+            - configMapRef:
+                name: {{ $.Release.Name }}-config
+            - secretRef:
+                name: {{ $.Values.secrets.name }}
+          {{- if or $svc.port $svc.healthPort }}
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: metrics
+            initialDelaySeconds: 5
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 3
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: metrics
+            initialDelaySeconds: 10
+            periodSeconds: 15
+            timeoutSeconds: 3
+            failureThreshold: 5
+          startupProbe:
+            httpGet:
+              path: /healthz
+              port: metrics
+            initialDelaySeconds: 5
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 30
+          {{- else }}
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: metrics
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: metrics
+            initialDelaySeconds: 10
+            periodSeconds: 15
+          {{- end }}
+          resources:
+            {{- toYaml $svc.resources | nindent 12 }}
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: tmp
+          emptyDir: {}
+      terminationGracePeriodSeconds: 30
+{{- end }}

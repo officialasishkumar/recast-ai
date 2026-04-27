@@ -1,0 +1,19 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ .Release.Name }}-config
+  labels:
+    {{- include "recast.labels" . | nindent 4 }}
+data:
+  ENVIRONMENT: {{ .Values.env.ENVIRONMENT | quote }}
+  LOG_LEVEL: {{ .Values.env.LOG_LEVEL | quote }}
+  OTEL_EXPORTER_OTLP_ENDPOINT: {{ .Values.env.OTEL_EXPORTER_OTLP_ENDPOINT | quote }}
+  DB_HOST: {{ .Values.externalDependencies.postgres.host | quote }}
+  DB_PORT: {{ .Values.externalDependencies.postgres.port | quote }}
+  DB_NAME: {{ .Values.externalDependencies.postgres.database | quote }}
+  REDIS_HOST: {{ .Values.externalDependencies.redis.host | quote }}
+  REDIS_PORT: {{ .Values.externalDependencies.redis.port | quote }}
+  RABBITMQ_HOST: {{ .Values.externalDependencies.rabbitmq.host | quote }}
+  RABBITMQ_PORT: {{ .Values.externalDependencies.rabbitmq.port | quote }}
+  S3_ENDPOINT: {{ .Values.externalDependencies.s3.endpoint | quote }}
+  S3_BUCKET: {{ .Values.externalDependencies.s3.bucket | quote }}
