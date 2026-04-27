@@ -1,0 +1,4 @@
+# Test / development credentials that intentionally appear in source.
+# Keep this file short — every entry is a deliberate exception.
+docker-compose.yml:dev-secret-change-in-production
+.env.example:dev-secret-change-in-production

@@ -1,0 +1,14 @@
+# Default owners for everything in this repository.
+*                                   @officialasishkumar
+
+# Reserved zones — changes here should always be reviewed deliberately.
+/.github/                           @officialasishkumar
+/docker/                            @officialasishkumar
+/docker/monitoring/                 @officialasishkumar
+/migrations/                        @officialasishkumar
+/pkg/observability/                 @officialasishkumar
+/pkg/queue/                         @officialasishkumar
+/pkg/auth/                          @officialasishkumar
+/services/video-analyzer/analyzer/  @officialasishkumar
+/services/tts-service/tts/          @officialasishkumar
+/web/src/lib/api.ts                 @officialasishkumar

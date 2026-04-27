@@ -1,0 +1,65 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": [
+    "config:recommended",
+    "docker:enableMajor",
+    "schedule:weekends",
+    ":semanticCommits",
+    ":dependencyDashboard"
+  ],
+  "labels": ["dependencies"],
+  "prHourlyLimit": 4,
+  "prConcurrentLimit": 8,
+  "rangeStrategy": "bump",
+  "lockFileMaintenance": {
+    "enabled": true,
+    "schedule": ["before 5am on monday"]
+  },
+  "vulnerabilityAlerts": {
+    "labels": ["security"],
+    "schedule": ["at any time"],
+    "automerge": true
+  },
+  "packageRules": [
+    {
+      "groupName": "Go modules (patch)",
+      "matchManagers": ["gomod"],
+      "matchUpdateTypes": ["patch"],
+      "automerge": true
+    },
+    {
+      "groupName": "Python deps (patch)",
+      "matchManagers": ["pip_requirements"],
+      "matchUpdateTypes": ["patch"],
+      "automerge": true
+    },
+    {
+      "groupName": "Node deps (patch)",
+      "matchManagers": ["npm"],
+      "matchUpdateTypes": ["patch"],
+      "automerge": true
+    },
+    {
+      "groupName": "GitHub Actions",
+      "matchManagers": ["github-actions"],
+      "matchUpdateTypes": ["minor", "patch"],
+      "automerge": true
+    },
+    {
+      "groupName": "Observability stack",
+      "matchPackageNames": [
+        "prom/prometheus",
+        "prom/alertmanager",
+        "prom/node-exporter",
+        "grafana/grafana",
+        "grafana/loki",
+        "grafana/tempo",
+        "otel/opentelemetry-collector-contrib"
+      ]
+    },
+    {
+      "matchPackageNames": ["postgres"],
+      "allowedVersions": "/^17/"
+    }
+  ]
+}

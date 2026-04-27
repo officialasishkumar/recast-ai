@@ -56,7 +56,7 @@ jobs:
         uses: golangci/golangci-lint-action@v6
         with:
           version: v1.62
-          args: --timeout=5m
+          args: --timeout=5m --config=.golangci.yml
 
       - name: Run migrations
         env:
@@ -91,6 +91,16 @@ jobs:
           name: go-coverage
           path: coverage.txt
           if-no-files-found: warn
+
+      - name: Enforce minimum coverage on critical packages
+        run: |
+          set -euo pipefail
+          go test -count=1 -coverprofile=/tmp/critical.cov \
+            ./pkg/observability/... \
+            ./pkg/resilience/...
+          total=$(go tool cover -func=/tmp/critical.cov | awk '/^total:/ {gsub("%","",$3); print $3}')
+          echo "Critical-package coverage: $total%"
+          python3 -c "import sys; sys.exit(0 if float('$total') >= 60 else 1)"
 
   python-lint-test:
     name: Python Lint & Test (${{ matrix.service }})

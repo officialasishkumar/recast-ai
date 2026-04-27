@@ -1,0 +1,120 @@
+name: Performance Smoke
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "cmd/api-gateway/**"
+      - "internal/gateway/**"
+      - "pkg/**"
+      - "docker/api-gateway.Dockerfile"
+      - ".github/workflows/perf-smoke.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: perf-smoke-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  k6:
+    name: k6 smoke test (api-gateway)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: recast
+          POSTGRES_PASSWORD: recast
+          POSTGRES_DB: recast
+        ports: [5432:5432]
+        options: >-
+          --health-cmd "pg_isready -U recast"
+          --health-interval 5s --health-timeout 3s --health-retries 10
+      redis:
+        image: redis:7-alpine
+        ports: [6379:6379]
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s --health-timeout 3s --health-retries 10
+      rabbitmq:
+        image: rabbitmq:3.13-management-alpine
+        ports: [5672:5672]
+        options: >-
+          --health-cmd "rabbitmq-diagnostics check_port_connectivity"
+          --health-interval 10s --health-timeout 5s --health-retries 10
+      minio:
+        image: bitnami/minio:latest
+        env:
+          MINIO_ROOT_USER: minioadmin
+          MINIO_ROOT_PASSWORD: minioadmin
+          MINIO_DEFAULT_BUCKETS: recast
+        ports: [9000:9000]
+        options: >-
+          --health-cmd "curl -f http://localhost:9000/minio/health/live || exit 1"
+          --health-interval 10s --health-timeout 5s --health-retries 10
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.25"
+          cache: true
+
+      - name: Install ffmpeg + psql
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends ffmpeg postgresql-client
+
+      - name: Apply migrations
+        env:
+          PGPASSWORD: recast
+        run: |
+          for f in migrations/*.up.sql; do
+            psql -h localhost -U recast -d recast -f "$f"
+          done
+
+      - name: Build api-gateway
+        run: go build -o bin/api-gateway ./cmd/api-gateway
+
+      - name: Start api-gateway
+        env:
+          DB_HOST: localhost
+          REDIS_HOST: localhost
+          RABBITMQ_HOST: localhost
+          S3_ENDPOINT: localhost:9000
+          S3_ACCESS_KEY: minioadmin
+          S3_SECRET_KEY: minioadmin
+          S3_BUCKET: recast
+          JWT_SECRET: dev-secret-perf
+          ENVIRONMENT: test
+          METRICS_PORT: "9100"
+        run: |
+          mkdir -p /tmp/perf-logs
+          nohup ./bin/api-gateway > /tmp/perf-logs/api-gateway.log 2>&1 &
+          for i in $(seq 1 30); do
+            curl -fsS http://localhost:8080/health && break
+            sleep 1
+          done
+
+      - name: Install k6
+        run: |
+          sudo gpg -k
+          sudo gpg --no-default-keyring --keyring /usr/share/keyrings/k6-archive-keyring.gpg --keyserver hkp://keyserver.ubuntu.com:80 --recv-keys C5AD17C747E3415A3642D57D77C6C491D6AC1D69
+          echo "deb [signed-by=/usr/share/keyrings/k6-archive-keyring.gpg] https://dl.k6.io/deb stable main" | sudo tee /etc/apt/sources.list.d/k6.list
+          sudo apt-get update
+          sudo apt-get install -y k6
+
+      - name: Run k6 smoke test
+        run: k6 run --quiet test/perf/smoke.js
+
+      - name: Upload server logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: perf-smoke-logs
+          path: /tmp/perf-logs
+          retention-days: 7
