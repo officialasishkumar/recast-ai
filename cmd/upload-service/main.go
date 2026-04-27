@@ -817,4 +817,3 @@ func (t *memoryTracker) Purge(_ context.Context, uploadID string) error {
 	delete(t.data, uploadID)
 	return nil
 }
-

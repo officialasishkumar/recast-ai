@@ -36,14 +36,14 @@ type client struct {
 // Hub manages per-job client sets and bridges Redis pub/sub events to
 // connected WebSocket clients.
 type Hub struct {
-	mu      sync.RWMutex
-	jobs    map[string]map[*client]struct{} // jobID -> set of clients
-	redis   *redis.Client
-	logger  *slog.Logger
-	ctx     context.Context
-	cancel  context.CancelFunc
-	subs    map[string]*redis.PubSub // jobID -> active subscription
-	subsMu  sync.Mutex
+	mu     sync.RWMutex
+	jobs   map[string]map[*client]struct{} // jobID -> set of clients
+	redis  *redis.Client
+	logger *slog.Logger
+	ctx    context.Context
+	cancel context.CancelFunc
+	subs   map[string]*redis.PubSub // jobID -> active subscription
+	subsMu sync.Mutex
 }
 
 // NewHub creates a Hub. Call Run() in a separate goroutine.

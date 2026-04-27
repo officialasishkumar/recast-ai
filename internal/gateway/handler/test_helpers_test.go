@@ -111,8 +111,8 @@ func (c *fakeConn) Prepare(query string) (driver.Stmt, error) {
 	return &fakeStmt{conn: c, query: query}, nil
 }
 
-func (c *fakeConn) Close() error                                     { return nil }
-func (c *fakeConn) Begin() (driver.Tx, error)                        { return &fakeTx{}, nil }
+func (c *fakeConn) Close() error              { return nil }
+func (c *fakeConn) Begin() (driver.Tx, error) { return &fakeTx{}, nil }
 func (c *fakeConn) BeginTx(_ context.Context, _ driver.TxOptions) (driver.Tx, error) {
 	return &fakeTx{}, nil
 }

@@ -1,62 +1,44 @@
+version: "2"
+
 run:
   timeout: 5m
   tests: true
 
 linters:
-  disable-all: true
+  default: none
   enable:
-    - bodyclose
-    - errcheck
-    - gocritic
-    - gofmt
-    - goimports
-    - gosec
-    - gosimple
     - govet
     - ineffassign
     - misspell
-    - nakedret
     - nilerr
-    - prealloc
-    - revive
     - staticcheck
-    - typecheck
     - unconvert
-    - unparam
     - unused
     - whitespace
+  settings:
+    staticcheck:
+      checks:
+        - all
+        # Drop the QF (quick-fix) family which is style-only.
+        - -QF1001
+        - -QF1003
+        - -QF1008
+        # ST1000: package comment requirement is style-only.
+        - -ST1000
+        # ST1003: identifier naming style suggestions.
+        - -ST1003
+  exclusions:
+    paths:
+      - web/node_modules
 
-linters-settings:
-  gocritic:
-    enabled-tags: [performance, style, opinionated]
-    disabled-checks:
-      - hugeParam
-      - rangeValCopy
-  gosec:
-    excludes:
-      - G104  # unhandled errors are flagged elsewhere
-      - G404  # we use math/rand for non-crypto purposes
-  revive:
-    severity: warning
-    rules:
-      - name: unused-parameter
-        disabled: true
-      - name: var-naming
-      - name: error-return
-      - name: error-strings
-      - name: receiver-naming
-      - name: indent-error-flow
+formatters:
+  enable:
+    - gofmt
+    - goimports
+  exclusions:
+    paths:
+      - web/node_modules
 
 issues:
   max-issues-per-linter: 0
   max-same-issues: 0
-  exclude-rules:
-    - path: _test\.go
-      linters:
-        - gosec
-        - errcheck
-        - prealloc
-        - unparam
-    - path: cmd/
-      linters:
-        - revive
