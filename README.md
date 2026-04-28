@@ -141,7 +141,6 @@ recast-ai/
 │   └── delivery-service/         # Final delivery + webhooks
 ├── internal/                     # Go internal packages
 │   ├── gateway/                  # API gateway handlers & middleware
-│   ├── muxer/                    # Mux helpers
 │   └── delivery/                 # Webhook delivery
 ├── pkg/                          # Shared Go packages
 │   ├── auth/                     # JWT generation & validation
@@ -150,6 +149,7 @@ recast-ai/
 │   ├── health/                   # /healthz / /readyz helpers
 │   ├── models/                   # Domain types & queue messages
 │   ├── observability/            # OTLP tracing, metrics, /metrics server
+│   ├── outbox/                   # Transactional outbox dispatcher
 │   ├── queue/                    # RabbitMQ wrapper with trace propagation
 │   ├── resilience/               # Circuit breaker, retry, backoff
 │   └── storage/                  # S3/MinIO wrapper
@@ -179,6 +179,7 @@ recast-ai/
 | POST | `/v1/auth/register` | Register with email and password |
 | POST | `/v1/auth/login` | Login, returns JWT and refresh token |
 | POST | `/v1/auth/refresh` | Refresh JWT token |
+| POST | `/v1/auth/google` | Sign in with a Google ID token |
 | GET | `/v1/auth/me` | Get current user profile |
 
 ### Jobs
@@ -193,6 +194,7 @@ recast-ai/
 | PATCH | `/v1/jobs/:id/transcript` | Update transcript segments |
 | POST | `/v1/jobs/:id/segments/:segmentId/regenerate` | Re-synthesize a single segment |
 | POST | `/v1/jobs/:id/share` | Mint a public share token |
+| DELETE | `/v1/jobs/:id/share` | Revoke an existing share token |
 | GET | `/v1/jobs/:id/export` | Get download URL |
 | WS | `/v1/ws/jobs/:id` | Real-time job progress |
 
@@ -204,11 +206,14 @@ recast-ai/
 
 ### Uploads
 
+The `upload-service` exposes a chunked-upload API on its own port (`8081` by default), separate from the API gateway.
+
 | Method | Endpoint | Description |
 |---|---|---|
-| POST | `/v1/uploads` | Initiate a multipart upload |
-| PUT | `/v1/uploads/:id/parts/:n` | Upload a single part |
-| POST | `/v1/uploads/:id/complete` | Finalize the upload |
+| POST | `/v1/upload/chunk` | Stream a single chunk; identifies the upload via `upload_id` and `chunk_idx` (query param or `X-Upload-ID` / `X-Chunk-Index` header) |
+| POST | `/v1/upload/complete` | Finalize an upload once every chunk has been received |
+| GET | `/v1/upload/{id}/status` | Inspect chunk receipt state |
+| DELETE | `/v1/upload/{id}` | Abort and discard an in-progress upload |
 
 ### Public
 
@@ -331,7 +336,7 @@ crash, restart, and pick up where it left off without data loss.
 
 ## CI/CD
 
-Eight GitHub Actions pipelines cover lint, test, security, and release.
+Nine GitHub Actions pipelines cover lint, test, security, and release.
 
 | Workflow | When | What it does |
 |---|---|---|

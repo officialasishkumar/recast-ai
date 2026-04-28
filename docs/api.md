@@ -109,13 +109,13 @@ curl -X POST http://localhost:8080/v1/auth/register \
 - **Request body:** `{ "refresh_token": "rt_..." }`
 - **Response (200):** a fresh `access_token` and rotated `refresh_token`.
 
-### Logout
+### Google Sign-In
 
 - **Method:** `POST`
-- **Path:** `/v1/auth/logout`
-- **Auth required?** Yes
-- **Request body:** `{ "refresh_token": "rt_..." }`
-- **Response (204):** empty body.
+- **Path:** `/v1/auth/google`
+- **Auth required?** No
+- **Request body:** `{ "id_token": "<google-id-token>" }`
+- **Response (200):** `{ "access_token": "...", "refresh_token": "rt_..." }`. New users are provisioned on first call.
 
 ### Me
 
@@ -272,48 +272,38 @@ curl -X POST http://localhost:8080/v1/jobs \
 
 ## Uploads
 
-### Create Chunked Upload
-
-- **Method:** `POST`
-- **Path:** `/v1/uploads`
-- **Auth required?** Yes
-- **Request body:**
-
-```json
-{ "filename": "demo.mp4", "size_bytes": 41234567, "mime_type": "video/mp4" }
-```
-
-- **Response (201):** `{ "upload_id": "upl_...", "chunk_size": 5242880 }`.
+The `upload-service` exposes its own HTTP API (default port `8081`), separate from the gateway. Clients invent their own `upload_id` (any opaque string), stream chunks, then call `complete`. JWT auth is required on all chunked-upload endpoints.
 
 ### Upload Chunk
 
-- **Method:** `PUT`
-- **Path:** `/v1/uploads/:id/parts/:n`
+- **Method:** `POST`
+- **Path:** `/v1/upload/chunk`
 - **Auth required?** Yes
-- **Request body:** raw bytes for part `n` (multipart/form-data binary).
-- **Response (200):** `{ "etag": "...", "part_number": 1 }`.
+- **Identifiers:** pass `upload_id` and `chunk_idx` either as query parameters or via `X-Upload-ID` and `X-Chunk-Index` headers.
+- **Request body:** raw chunk bytes.
+- **Response (200):** `{ "upload_id": "...", "chunk_idx": 0, "received_bytes": 5242880 }`.
 
 ### Complete Upload
 
 - **Method:** `POST`
-- **Path:** `/v1/uploads/:id/complete`
+- **Path:** `/v1/upload/complete`
 - **Auth required?** Yes
-- **Request body:** `{ "parts": [ { "part_number": 1, "etag": "..." } ] }`.
-- **Response (200):** `{ "upload_id": "upl_...", "object_key": "raw/...", "duration_ms": 183000 }`.
+- **Identifiers:** `upload_id` (query or `X-Upload-ID` header) plus the total `chunk_count` and `filename`.
+- **Response (200):** `{ "upload_id": "...", "object_key": "uploads/<id>/<filename>" }` once every chunk is present.
 
 ### Upload Status
 
 - **Method:** `GET`
-- **Path:** `/v1/uploads/:id`
+- **Path:** `/v1/upload/{id}/status`
 - **Auth required?** Yes
-- **Response (200):** `{ "upload_id": "upl_...", "received_parts": 6, "expected_parts": 8 }`.
+- **Response (200):** `{ "upload_id": "...", "received_chunks": 6, "expected_chunks": 8 }`.
 
 ### Delete Upload
 
 - **Method:** `DELETE`
-- **Path:** `/v1/uploads/:id`
+- **Path:** `/v1/upload/{id}`
 - **Auth required?** Yes
-- **Response (204):** empty body. Abandoned parts are removed from MinIO.
+- **Response (204):** empty body. Buffered chunks for that `upload_id` are removed from MinIO.
 
 ## Voices
 
@@ -331,14 +321,6 @@ curl -X POST http://localhost:8080/v1/jobs \
   ]
 }
 ```
-
-### Preview Voice
-
-- **Method:** `POST`
-- **Path:** `/v1/voices/:id/preview`
-- **Auth required?** Yes
-- **Request body:** `{ "text": "A short sample sentence." }`.
-- **Response (200):** `{ "audio_url": "https://...", "expires_at": "..." }`.
 
 ## Public
 
@@ -373,6 +355,10 @@ curl -X POST http://localhost:8080/v1/jobs \
 
 ## Health
 
-- `GET /healthz` on the gateway returns `{ "status": "ok" }`.
-- `GET /readyz` returns `200` once Postgres, Redis, and RabbitMQ connections are established.
-- `GET /metrics` exposes Prometheus text format.
+Each service exposes a metrics sidecar on a dedicated port (`9100`–`9105`) carrying:
+
+- `GET /healthz` — liveness, returns `{ "status": "ok" }`.
+- `GET /readyz` — readiness, returns `200` once Postgres, Redis, and RabbitMQ connections are established.
+- `GET /metrics` — Prometheus text format.
+
+The gateway additionally serves `GET /health` on its application port (`8080`) for simple smoke checks.
