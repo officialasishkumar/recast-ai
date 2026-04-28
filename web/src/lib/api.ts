@@ -69,6 +69,31 @@ export interface TranscriptSegment {
   audio_path: string;
   approved: boolean;
   flagged: boolean;
+  /** Number of synthesis attempts run for this segment (1 = no rewrite). */
+  iteration_count?: number;
+  /** Combined FFmpeg quality score in [0, 1]; null when not yet scored. */
+  quality_score?: number | null;
+  /** Structured failure diagnosis from the FFmpeg gate. */
+  quality_diagnosis?: SegmentDiagnosis;
+  /** History of synthesis attempts; latest entry is what landed. */
+  rewrite_history?: SegmentRewriteAttempt[];
+}
+
+export interface SegmentDiagnosis {
+  duration_overflow_ms?: number;
+  duration_underflow_ms?: number;
+  silence_ratio?: number;
+  lufs?: number | null;
+  issues?: string[];
+  combined_score?: number;
+}
+
+export interface SegmentRewriteAttempt {
+  attempt: number;
+  text: string;
+  synthesized_ms: number;
+  score: number;
+  diagnosis: SegmentDiagnosis;
 }
 
 export interface Transcript {

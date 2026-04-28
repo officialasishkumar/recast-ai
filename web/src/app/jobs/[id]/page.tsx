@@ -280,6 +280,18 @@ export default function JobDetailPage({
     return job.output_url || job.video_url || "";
   }, [job]);
 
+  // Aggregate quality-iteration stats so the header can summarize how many
+  // segments needed an AI rewrite and how many never crossed the gate.
+  const qualityStats = useMemo(() => {
+    let refined = 0;
+    let flagged = 0;
+    for (const seg of segments) {
+      if ((seg.iteration_count ?? 0) > 1) refined += 1;
+      if (seg.flagged) flagged += 1;
+    }
+    return { refined, flagged };
+  }, [segments]);
+
   if (loading) {
     return (
       <div className="flex min-h-[calc(100vh-4rem)] items-center justify-center">
@@ -354,6 +366,22 @@ export default function JobDetailPage({
                 <span className="text-text">
                   {job.language.toUpperCase()}
                 </span>
+              </div>
+            )}
+            {qualityStats.refined > 0 && (
+              <div
+                className="flex items-center gap-1.5"
+                title={`${qualityStats.refined} segment${qualityStats.refined === 1 ? "" : "s"} were rewritten by Gemini before passing the FFmpeg quality gate.`}
+              >
+                <Sparkles className="h-3.5 w-3.5 text-accent" />
+                <span className="text-text">
+                  {qualityStats.refined} AI-refined
+                </span>
+                {qualityStats.flagged > 0 && (
+                  <span className="text-warn">
+                    · {qualityStats.flagged} flagged
+                  </span>
+                )}
               </div>
             )}
           </dl>

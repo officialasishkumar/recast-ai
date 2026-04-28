@@ -14,6 +14,7 @@ import {
   Play,
   RefreshCw,
   Save,
+  Sparkles,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -21,6 +22,7 @@ import { cn } from "@/lib/utils";
 import {
   regenerateSegment,
   updateTranscript,
+  type SegmentRewriteAttempt,
   type TranscriptSegment,
 } from "@/lib/api";
 
@@ -64,6 +66,100 @@ function confidenceVariant(
   if (c >= 0.85) return "success";
   if (c >= 0.6) return "warning";
   return "danger";
+}
+
+function qualityVariant(
+  score: number | null | undefined
+): "success" | "warning" | "danger" {
+  if (score == null) return "warning";
+  if (score >= 0.85) return "success";
+  if (score >= 0.7) return "warning";
+  return "danger";
+}
+
+const ISSUE_LABELS: Record<string, string> = {
+  too_long_for_scene: "Speech overflows the scene",
+  too_short_for_scene: "Speech finishes too early",
+  excessive_silence: "Long mid-segment pause",
+  too_loud: "Loudness above broadcast band",
+  too_quiet: "Loudness below broadcast band",
+};
+
+function describeIssue(key: string): string {
+  return ISSUE_LABELS[key] ?? key.replace(/_/g, " ");
+}
+
+function QualityDetails({
+  iterationCount,
+  qualityScore,
+  history,
+}: {
+  iterationCount: number;
+  qualityScore: number | null | undefined;
+  history: SegmentRewriteAttempt[];
+}) {
+  const final = history[history.length - 1];
+  const issues = final?.diagnosis.issues ?? [];
+  const overflow = final?.diagnosis.duration_overflow_ms ?? 0;
+
+  return (
+    <details className="group mt-2.5 rounded-lg border border-border bg-bg-elev/60 px-3 py-2">
+      <summary
+        className={cn(
+          "flex cursor-pointer items-center gap-2 text-[12px] text-text-muted",
+          "[&::-webkit-details-marker]:hidden",
+          "focus-ring rounded"
+        )}
+      >
+        <Sparkles className="h-3.5 w-3.5 text-accent" strokeWidth={2.25} />
+        <span className="font-medium text-text">
+          AI refined {iterationCount}x
+        </span>
+        {qualityScore != null && (
+          <Badge variant={qualityVariant(qualityScore)} className="ml-1">
+            quality {Math.round(qualityScore * 100)}%
+          </Badge>
+        )}
+        {overflow > 0 && (
+          <span className="ml-auto text-text-dim">
+            {overflow}ms over budget
+          </span>
+        )}
+      </summary>
+      <div className="mt-2 space-y-2 text-[12px] leading-relaxed text-text-muted">
+        {issues.length > 0 && (
+          <ul className="list-disc space-y-0.5 pl-4">
+            {issues.map((key) => (
+              <li key={key}>{describeIssue(key)}</li>
+            ))}
+          </ul>
+        )}
+        {history.length > 1 && (
+          <ol className="space-y-1.5 border-l border-border pl-3">
+            {history.map((attempt) => (
+              <li key={attempt.attempt} className="text-[12px]">
+                <span className="font-medium text-text">
+                  Attempt {attempt.attempt}
+                </span>{" "}
+                <span className="text-text-dim">
+                  · score {Math.round(attempt.score * 100)}%
+                </span>
+                <p className="text-text-muted">
+                  &ldquo;{attempt.text.slice(0, 140)}
+                  {attempt.text.length > 140 ? "…" : ""}&rdquo;
+                </p>
+              </li>
+            ))}
+          </ol>
+        )}
+        {history.length <= 1 && issues.length === 0 && (
+          <p className="text-text-dim">
+            Synthesized in one pass; no rewrite was needed.
+          </p>
+        )}
+      </div>
+    </details>
+  );
 }
 
 function parseWordTimings(seg: ExtendedSegment): WordTiming[] {
@@ -409,6 +505,14 @@ export function TranscriptEditor({
                 onChange={(next) => updateText(seg.id, next)}
                 label={`Edit segment ${formatTimecode(seg.start_ms / 1000)}`}
               />
+
+              {seg.iteration_count != null && seg.iteration_count > 1 && (
+                <QualityDetails
+                  iterationCount={seg.iteration_count}
+                  qualityScore={seg.quality_score}
+                  history={seg.rewrite_history ?? []}
+                />
+              )}
 
               <div className="mt-2.5 flex items-center justify-end gap-1.5">
                 <Button
