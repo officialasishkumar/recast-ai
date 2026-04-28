@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strconv"
 	"syscall"
 	"time"
 
@@ -160,9 +161,27 @@ func main() {
 		v1.Group(func(authed chi.Router) {
 			authed.Use(mw.JWTAuth(authCfg))
 			authed.Use(mw.RateLimiter(rdb, mw.DefaultLimit(), logger))
+			// Idempotency-Key support so client retries across our 5xx
+			// (or their own restart) do not double-create jobs. Bodies
+			// over 10 MiB transparently bypass caching.
+			authed.Use(mw.Idempotency(rdb, logger))
+
+			// Admission control gates work-creating endpoints on
+			// ingestion queue depth so we shed load at the edge before
+			// queue memory pressure cascades into the worker tier.
+			admission := mw.NewAdmissionController(
+				context.Background(),
+				mw.AdmissionConfig{
+					QueueName:               queue.IngestionQueue,
+					MaxDepth:                envInt("ADMISSION_MAX_QUEUE_DEPTH", 1000),
+					MeanStageLatencySeconds: envInt("ADMISSION_MEAN_STAGE_S", 30),
+				},
+				qConn.QueueDepth,
+				logger,
+			)
 
 			// Jobs.
-			authed.Post("/jobs", deps.CreateJob)
+			authed.With(admission.Middleware()).Post("/jobs", deps.CreateJob)
 			authed.Get("/jobs", deps.ListJobs)
 			authed.Get("/jobs/{id}", deps.GetJob)
 			authed.Delete("/jobs/{id}", deps.DeleteJob)
@@ -172,7 +191,7 @@ func main() {
 			authed.Patch("/jobs/{id}/transcript", deps.UpdateTranscript)
 
 			// Segment regeneration.
-			authed.Post("/jobs/{id}/segments/{segmentId}/regenerate", deps.RegenerateSegment)
+			authed.With(admission.Middleware()).Post("/jobs/{id}/segments/{segmentId}/regenerate", deps.RegenerateSegment)
 
 			// Share links.
 			authed.Post("/jobs/{id}/share", deps.CreateShare)
@@ -226,4 +245,17 @@ func main() {
 	obs.Shutdown(shutCtx)
 
 	logger.Info("api-gateway stopped")
+}
+
+// envInt reads an integer environment variable with a default fallback.
+func envInt(name string, fallback int) int {
+	v := os.Getenv(name)
+	if v == "" {
+		return fallback
+	}
+	n, err := strconv.Atoi(v)
+	if err != nil || n <= 0 {
+		return fallback
+	}
+	return n
 }

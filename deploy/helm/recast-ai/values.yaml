@@ -74,12 +74,20 @@ services:
 
   deliveryService:
     name: delivery-service
-    replicas: 1
+    # Replicas raised from 1 to 2 so a single pod crash does not halt
+    # webhook delivery and pre-signed URL minting. PDB.minAvailable=1
+    # then keeps at least one pod live during voluntary disruptions.
+    replicas: 2
     image: delivery-service
     metricsPort: 9103
     resources:
       requests: {cpu: 100m, memory: 128Mi}
       limits:   {cpu: 500m, memory: 512Mi}
+    autoscaling:
+      enabled: true
+      minReplicas: 2
+      maxReplicas: 6
+      queueLength: 100
 
   videoAnalyzer:
     name: video-analyzer
