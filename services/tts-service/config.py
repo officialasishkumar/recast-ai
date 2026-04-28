@@ -68,6 +68,31 @@ class Settings(BaseSettings):
     # --- Logging ---
     log_level: str = Field(default="INFO", description="Log level (DEBUG, INFO, WARNING, ERROR)")
 
+    # --- Quality-iteration loop ---
+    # The TTS service synthesizes a segment, scores it via FFmpeg, and (when
+    # the score is below the pass threshold) calls the video-analyzer's
+    # /rewrite endpoint for a text-only Gemini rewrite of that segment, then
+    # re-synthesizes. This caps how many rewrite attempts are made.
+    quality_iteration_enabled: bool = Field(
+        default=True, description="Enable the rewrite-then-resynthesize loop"
+    )
+    quality_max_iterations: int = Field(
+        default=3,
+        description="Maximum total synthesis attempts per segment (1 = no rewrite)",
+    )
+    quality_pass_threshold: float = Field(
+        default=0.7,
+        description="Combined score above which a segment is accepted",
+    )
+    video_analyzer_url: str = Field(
+        default="http://video-analyzer:8080",
+        description="Base URL of the video-analyzer service for /rewrite calls",
+    )
+    rewrite_timeout_s: int = Field(
+        default=60,
+        description="HTTP timeout for /rewrite calls to video-analyzer",
+    )
+
     # --- Database ---
     db_sslmode: str = Field(default="disable", description="PostgreSQL sslmode")
 

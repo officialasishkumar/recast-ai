@@ -38,8 +38,9 @@ from observability import (
     setup_observability,
 )
 from tts.alignment import align_words_to_segment
+from tts.iterate import IterationResult, synthesize_with_iteration
 from tts.speed_control import FitResult, fit_to_segment
-from tts.synthesizer import SynthesisResult, TTSProvider, build_provider
+from tts.synthesizer import TTSProvider, build_provider
 
 # --------------------------------------------------------------------------- #
 # Logging
@@ -211,26 +212,51 @@ def _update_segment_record(
     audio_path: str,
     flagged: bool,
     words: list[dict[str, int | str]],
+    final_text: str | None = None,
+    iteration_count: int = 0,
+    quality_score: float | None = None,
+    quality_diagnosis: dict[str, Any] | None = None,
+    rewrite_history: list[dict[str, Any]] | None = None,
 ) -> None:
-    """Persist audio path, flag, and word-level timings for a segment."""
+    """Persist audio path, flag, word timings, and iteration metadata.
+
+    The iteration columns (iteration_count, quality_score,
+    quality_diagnosis, rewrite_history) are written so the editor UI
+    and analytics can answer "which segments needed rewrites and why"
+    without spelunking logs. ``final_text`` overrides the original
+    transcript text when the rewrite loop converged on a new wording.
+    """
+    set_clauses = [
+        "audio_path = %s",
+        "flagged    = %s",
+        "words_json = %s::jsonb",
+        "iteration_count = %s",
+        "quality_score = %s",
+        "quality_diagnosis = %s::jsonb",
+        "rewrite_history = %s::jsonb",
+    ]
+    params: list[Any] = [
+        audio_path,
+        flagged,
+        json.dumps(words),
+        iteration_count,
+        quality_score,
+        json.dumps(quality_diagnosis or {}),
+        json.dumps(rewrite_history or []),
+    ]
+    if final_text is not None:
+        set_clauses.append("text = %s")
+        params.append(final_text)
+    params.extend([job_id, segment_idx])
+
+    sql = f"""
+        UPDATE transcript_segments
+           SET {", ".join(set_clauses)}
+         WHERE job_id = %s
+           AND segment_idx = %s
+    """
     with pg_conn.cursor() as cur:
-        cur.execute(
-            """
-            UPDATE transcript_segments
-               SET audio_path = %s,
-                   flagged    = %s,
-                   words_json = %s::jsonb
-             WHERE job_id = %s
-               AND segment_idx = %s
-            """,
-            (
-                audio_path,
-                flagged,
-                json.dumps(words),
-                job_id,
-                segment_idx,
-            ),
-        )
+        cur.execute(sql, params)
     pg_conn.commit()
 
 
@@ -291,11 +317,18 @@ def _process_segment(
     job_id: str,
     voice_id: str,
     language: str,
+    style: str,
     provider: TTSProvider,
     minio_client: Minio,
     pg_conn: psycopg2.extensions.connection,
 ) -> dict[str, Any]:
-    """Synthesize, fit, align, persist, and return a summary dict."""
+    """Synthesize, score, optionally rewrite-and-resynthesize, fit, persist.
+
+    The synthesis step now runs through ``synthesize_with_iteration``
+    which handles the rewrite-then-resynthesize loop. The best-scoring
+    attempt is returned and we apply ``fit_to_segment`` to that audio
+    before persistence.
+    """
     text: str = str(segment.get("text", "")).strip()
     segment_id: int = int(segment.get("segment_id", 0))
     start_ms: int = int(segment.get("start_ms", 0))
@@ -309,7 +342,20 @@ def _process_segment(
         text_length=len(text),
     )
 
-    result: SynthesisResult = provider.synthesize(text, voice_id, language)
+    iteration: IterationResult = synthesize_with_iteration(
+        provider=provider,
+        segment=segment,
+        voice_id=voice_id,
+        language=language,
+        style=style,
+        target_duration_ms=target_duration_ms,
+        max_iterations=settings.quality_max_iterations,
+        pass_threshold=settings.quality_pass_threshold,
+        rewriter_url=settings.video_analyzer_url,
+        rewrite_timeout_s=settings.rewrite_timeout_s,
+        enabled=settings.quality_iteration_enabled,
+    )
+    result = iteration.synthesis
 
     fit: FitResult = fit_to_segment(
         audio_bytes=result.audio_bytes,
@@ -319,7 +365,7 @@ def _process_segment(
     )
 
     words = align_words_to_segment(
-        segment=segment,
+        segment={**segment, "text": iteration.final_text},
         provider_alignment=result.word_alignments,
         final_duration_ms=fit.final_duration_ms,
     )
@@ -332,22 +378,36 @@ def _process_segment(
         content_type=SEGMENT_MIME,
     )
 
+    # Flag the segment if speed adjustment failed OR if iteration could not
+    # bring quality above the pass threshold; both warrant manual review.
+    quality_passed = iteration.score.passes(settings.quality_pass_threshold)
+    flagged = fit.speed_flagged or not quality_passed
+
+    text_changed = iteration.final_text.strip() != text
     _update_segment_record(
         pg_conn=pg_conn,
         job_id=job_id,
         segment_idx=segment_id,
         audio_path=object_name,
-        flagged=fit.speed_flagged,
+        flagged=flagged,
         words=words,
+        final_text=iteration.final_text if text_changed else None,
+        iteration_count=iteration.iterations,
+        quality_score=iteration.score.combined,
+        quality_diagnosis=iteration.score.to_diagnosis(),
+        rewrite_history=iteration.rewrite_history,
     )
 
     return {
         "segment_id": segment_id,
         "audio_path": object_name,
         "duration_ms": fit.final_duration_ms,
-        "flagged": fit.speed_flagged,
+        "flagged": flagged,
         "applied_ratio": fit.applied_ratio,
         "word_count": len(words),
+        "iterations": iteration.iterations,
+        "quality_score": round(iteration.score.combined, 3),
+        "rewritten": text_changed,
     }
 
 
@@ -376,6 +436,7 @@ def _process_message(
 
         voice_id: str = str(payload.get("voice_id") or "default")
         language: str = str(payload.get("language") or "en")
+        style: str = str(payload.get("style") or "formal")
 
         segments = _select_segments(payload, pg_conn, job_id)
         if not segments:
@@ -390,6 +451,7 @@ def _process_message(
                 job_id=job_id,
                 voice_id=voice_id,
                 language=language,
+                style=style,
                 provider=provider,
                 minio_client=minio_client,
                 pg_conn=pg_conn,

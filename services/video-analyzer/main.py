@@ -32,10 +32,12 @@ import psycopg2.extras  # type: ignore[import-untyped]
 import redis
 import structlog
 import uvicorn
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from minio import Minio
+from pydantic import BaseModel, Field
 
 from analyzer.gemini import GeminiVideoAnalyzer
+from analyzer.rewriter import GeminiSegmentRewriter
 from config import settings
 from observability import (
     JOB_DURATION,
@@ -81,12 +83,66 @@ TRANSCRIPT_QUEUE = "transcript.queue"
 health_app = FastAPI()
 _healthy = True
 
+# Singleton rewriter for the /rewrite endpoint. Created in main() before the
+# uvicorn thread starts so handlers can read it without further locking. The
+# rewriter is text-only and shares the same Gemini API key as the whole-video
+# analyzer; it never re-uploads media.
+_rewriter: GeminiSegmentRewriter | None = None
+
 
 @health_app.get("/health")
 async def health() -> dict[str, str]:
     if _healthy:
         return {"status": "ok"}
     return {"status": "degraded"}
+
+
+class RewriteRequest(BaseModel):
+    """Inbound payload for the iteration-loop rewrite endpoint.
+
+    The TTS service POSTs this when a synthesized segment fails the
+    FFmpeg quality gate. ``diagnosis`` is the structured score summary
+    produced by ``services/tts-service/tts/quality.py``; we forward it
+    to Gemini so the model knows what to fix.
+    """
+
+    original_text: str = Field(..., min_length=1)
+    scene_start_ms: int = Field(..., ge=0)
+    scene_end_ms: int = Field(..., gt=0)
+    style: str = Field(default="formal")
+    language: str = Field(default="en")
+    diagnosis: dict[str, Any] = Field(default_factory=dict)
+
+
+class RewriteResponse(BaseModel):
+    text: str
+    changed: bool
+
+
+@health_app.post("/rewrite", response_model=RewriteResponse)
+async def rewrite_segment(req: RewriteRequest) -> RewriteResponse:
+    """Rewrite a single narration segment via a text-only Gemini call.
+
+    Returns the original text unchanged when the rewriter falls back
+    (timeouts, malformed JSON, empty result). Callers treat
+    ``changed=False`` as a hint to either accept the previous attempt
+    or stop iterating.
+    """
+    if _rewriter is None:
+        raise HTTPException(status_code=503, detail="rewriter not initialized")
+    if req.scene_end_ms <= req.scene_start_ms:
+        raise HTTPException(status_code=400, detail="scene_end_ms must exceed scene_start_ms")
+
+    new_text = await _rewriter.rewrite(
+        original_text=req.original_text,
+        scene_start_ms=req.scene_start_ms,
+        scene_end_ms=req.scene_end_ms,
+        diagnosis=req.diagnosis,
+        style=req.style,
+        language=req.language,
+    )
+    changed = new_text.strip() != req.original_text.strip()
+    return RewriteResponse(text=new_text, changed=changed)
 
 
 def _run_health_server() -> None:
@@ -585,6 +641,18 @@ def main() -> None:
     signal.signal(signal.SIGTERM, _signal_handler)
 
     setup_observability("video-analyzer", default_port=9104)
+
+    # Initialize the rewriter singleton before the uvicorn thread starts so
+    # the /rewrite handler reads a fully-constructed object without locking.
+    global _rewriter
+    _rewriter = GeminiSegmentRewriter(
+        api_key=settings.gemini_api_key,
+        # Rewrites are short text-only calls; the cheaper/faster model is
+        # the right default and we let GEMINI_REWRITE_MODEL override.
+        model=os.getenv("GEMINI_REWRITE_MODEL", settings.gemini_fallback_model),
+        timeout_s=min(settings.gemini_timeout_s, 60),
+    )
+    logger.info("rewriter_initialized", model=os.getenv("GEMINI_REWRITE_MODEL", settings.gemini_fallback_model))
 
     health_thread = threading.Thread(target=_run_health_server, daemon=True)
     health_thread.start()
